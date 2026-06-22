@@ -21,8 +21,7 @@ It runs on hardware as small as a **Raspberry Pi Zero W**: the Pi only scans and
 
 > **The idea:** walk into your animal room and know instantly — *green or not green* — whether everything's okay. Details are a tap away; status is readable from the doorway.
 
-![Dashboard screenshot](docs/dashboard.png)
-<!-- Drop a screenshot at docs/dashboard.png -->
+![Bask dashboard with example data](docs/dashboard.svg)
 
 ## Features
 
