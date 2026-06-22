@@ -191,4 +191,8 @@ kiosk.sh          optional fullscreen browser launcher for a host-attached scree
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Built by [jlyfshhh](https://github.com/jlyfshhh).
+MIT — see [LICENSE](LICENSE).
+
+---
+
+Built by **[jlyfshhh](https://github.com/jlyfshhh)**. I keep a room full of reptiles and amphibians — follow along on Instagram **[@thebioactivekeeper](https://instagram.com/thebioactivekeeper)** for the animals and bioactive builds behind this project. 🦎
