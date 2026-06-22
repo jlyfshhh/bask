@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Bask</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- ── Top bar: title, at-a-glance status counts, manage button ── -->
+  <header id="topbar">
+    <div class="brand">
+      <div class="brand-logo" aria-label="Bask">
+        <svg class="brand-sun" viewBox="8 8 104 58" role="img" aria-hidden="true">
+          <g stroke="#F2A516" stroke-width="6" stroke-linecap="round">
+            <line x1="60" y1="28" x2="60" y2="16"/>
+            <line x1="60" y1="28" x2="60" y2="16" transform="rotate(33 60 64)"/>
+            <line x1="60" y1="28" x2="60" y2="16" transform="rotate(-33 60 64)"/>
+            <line x1="60" y1="28" x2="60" y2="16" transform="rotate(66 60 64)"/>
+            <line x1="60" y1="28" x2="60" y2="16" transform="rotate(-66 60 64)"/>
+          </g>
+          <path d="M30 64 A30 30 0 0 1 90 64 Z" fill="#F2A516"/>
+          <path d="M47.5 64 A12.5 12.5 0 0 1 72.5 64 Z" fill="#FFF3D6"/>
+        </svg>
+        <span class="brand-word">bask</span>
+      </div>
+      <span id="clock"></span>
+    </div>
+    <div id="summary" class="summary"></div>
+    <div id="period" class="period-badge"></div>
+    <button class="manage-btn" onclick="openManage()" aria-label="Manage">
+      <span class="gear">⚙</span><span class="manage-label">Manage</span>
+    </button>
+  </header>
+
+  <!-- Big at-a-glance room status — readable from across the room -->
+  <div id="status-banner" class="status-banner"></div>
+
+  <!-- ── Dashboard grid (fixed order, color-coded) ── -->
+  <main id="grid"></main>
+  <div id="updated" class="updated-stamp"></div>
+
+  <!-- ── Per-enclosure detail sheet ── -->
+  <div id="detail" class="sheet-overlay" onclick="if(event.target===this)closeDetail()">
+    <div class="sheet" id="detail-sheet"></div>
+  </div>
+
+  <!-- ── Manage overlay (full screen, tabbed) ── -->
+  <div id="manage" class="manage-overlay">
+    <div class="manage-panel">
+      <div class="manage-head">
+        <div class="manage-tabs">
+          <button class="mtab active" data-tab="enclosures" onclick="switchTab('enclosures')">Enclosures</button>
+          <button class="mtab" data-tab="sensors" onclick="switchTab('sensors')">Sensors</button>
+          <button class="mtab" data-tab="species" onclick="switchTab('species')">Species</button>
+          <button class="mtab" data-tab="settings" onclick="switchTab('settings')">Settings</button>
+        </div>
+        <button class="close-btn" onclick="closeManage()" aria-label="Close">✕</button>
+      </div>
+      <div class="manage-body">
+        <section class="pane active" id="pane-enclosures"></section>
+        <section class="pane" id="pane-sensors"></section>
+        <section class="pane" id="pane-species"></section>
+        <section class="pane" id="pane-settings"></section>
+      </div>
+    </div>
+  </div>
+
+  <!-- Generic editor sheet reused by enclosure/sensor/species forms -->
+  <div id="editor" class="sheet-overlay" onclick="if(event.target===this)closeEditor()">
+    <div class="sheet" id="editor-sheet"></div>
+  </div>
+
+  <!-- ── Pair-by-proximity wizard (full screen) ── -->
+  <div id="pair" class="manage-overlay">
+    <div class="manage-panel pair-panel">
+      <div class="manage-head">
+        <h2 class="pair-title">Pair sensors</h2>
+        <button class="close-btn" onclick="closePair()" aria-label="Close">✕</button>
+      </div>
+      <div class="manage-body pair-body">
+        <div id="pair-nearest" class="pair-nearest"></div>
+        <div id="pair-targets" class="pair-targets"></div>
+      </div>
+    </div>
+  </div>
+  <div id="toast" class="toast"></div>
+
+  <script src="app.js"></script>
+  <!-- Keeps Amazon Echo Show's Silk browser from timing out to the home screen.
+       Only activates on Silk's user-agent (no effect on laptop/phone). -->
+  <script src="keep.js"></script>
+</body>
+</html>

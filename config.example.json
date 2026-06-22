@@ -1,0 +1,50 @@
+{
+  "sensors": [
+    { "mac": "A4:C1:38:00:00:01", "name": "Example Warm", "species": null },
+    { "mac": "A4:C1:38:00:00:02", "name": "Example Cool", "species": null }
+  ],
+  "enclosures": [
+    {
+      "id": "example-1",
+      "name": "Example Enclosure",
+      "species_id": "ball-python",
+      "sensors": [
+        { "mac": "A4:C1:38:00:00:01", "position": "Warm Side" },
+        { "mac": "A4:C1:38:00:00:02", "position": "Cool Side" }
+      ]
+    }
+  ],
+  "species": [
+    { "id": "ball-python", "name": "Ball Python",
+      "warm_temp_min": 84, "warm_temp_max": 90, "cool_temp_min": 74, "cool_temp_max": 82, "humidity_min": 60, "humidity_max": 80,
+      "night_warm_temp_min": 72, "night_warm_temp_max": 80, "night_cool_temp_min": 72, "night_cool_temp_max": 80, "night_humidity_min": 75, "night_humidity_max": 100 },
+    { "id": "bearded-dragon", "name": "Bearded Dragon",
+      "warm_temp_min": 95, "warm_temp_max": 110, "cool_temp_min": 75, "cool_temp_max": 88, "humidity_min": 20, "humidity_max": 50,
+      "night_warm_temp_min": 62, "night_warm_temp_max": 78, "night_cool_temp_min": 62, "night_cool_temp_max": 78, "night_humidity_min": 20, "night_humidity_max": 60 },
+    { "id": "veiled-chameleon", "name": "Veiled Chameleon",
+      "warm_temp_min": 82, "warm_temp_max": 90, "cool_temp_min": 70, "cool_temp_max": 78, "humidity_min": 40, "humidity_max": 55,
+      "night_warm_temp_min": 55, "night_warm_temp_max": 68, "night_cool_temp_min": 55, "night_cool_temp_max": 68, "night_humidity_min": 75, "night_humidity_max": 100 },
+    { "id": "panther-chameleon", "name": "Panther Chameleon",
+      "warm_temp_min": 83, "warm_temp_max": 90, "cool_temp_min": 72, "cool_temp_max": 80, "humidity_min": 45, "humidity_max": 65,
+      "night_warm_temp_min": 60, "night_warm_temp_max": 72, "night_cool_temp_min": 60, "night_cool_temp_max": 72, "night_humidity_min": 75, "night_humidity_max": 100 },
+    { "id": "leopard-gecko", "name": "Leopard Gecko",
+      "warm_temp_min": 88, "warm_temp_max": 94, "cool_temp_min": 70, "cool_temp_max": 78, "humidity_min": 30, "humidity_max": 45,
+      "night_warm_temp_min": 65, "night_warm_temp_max": 78, "night_cool_temp_min": 65, "night_cool_temp_max": 78, "night_humidity_min": 30, "night_humidity_max": 50 },
+    { "id": "pacman-frog", "name": "Pacman Frog",
+      "warm_temp_min": 75, "warm_temp_max": 83, "cool_temp_min": 72, "cool_temp_max": 80, "humidity_min": 60, "humidity_max": 80,
+      "night_warm_temp_min": 70, "night_warm_temp_max": 78, "night_cool_temp_min": 70, "night_cool_temp_max": 78, "night_humidity_min": 65, "night_humidity_max": 90 },
+    { "id": "crested-gecko", "name": "Crested Gecko",
+      "warm_temp_min": 72, "warm_temp_max": 80, "cool_temp_min": 70, "cool_temp_max": 77, "humidity_min": 50, "humidity_max": 80,
+      "night_warm_temp_min": 64, "night_warm_temp_max": 74, "night_cool_temp_min": 64, "night_cool_temp_max": 74, "night_humidity_min": 60, "night_humidity_max": 90 },
+    { "id": "western-hognose", "name": "Western Hognose",
+      "warm_temp_min": 83, "warm_temp_max": 90, "cool_temp_min": 68, "cool_temp_max": 75, "humidity_min": 30, "humidity_max": 50,
+      "night_warm_temp_min": 68, "night_warm_temp_max": 78, "night_cool_temp_min": 68, "night_cool_temp_max": 78, "night_humidity_min": 30, "night_humidity_max": 60 }
+  ],
+  "settings": {
+    "temp_unit": "F",
+    "stale_after_minutes": 10,
+    "low_battery_pct": 20,
+    "day_start_hour": 8,
+    "day_end_hour": 20
+  }
+}
