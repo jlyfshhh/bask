@@ -46,12 +46,7 @@ body {
   flex-shrink: 0;
 }
 .brand { display: flex; flex-direction: column; min-width: 0; }
-.brand-logo { display: flex; align-items: center; gap: 9px; }
-.brand-sun { height: 32px; width: auto; flex-shrink: 0; }
-.brand-word {
-  font-size: 1.7rem; font-weight: 800; line-height: 1;
-  color: #e0701a; letter-spacing: -0.01em;
-}
+.brand-logo { height: 38px; width: auto; display: block; }
 #clock { font-size: 0.85rem; color: var(--muted); margin-top: 4px; font-variant-numeric: tabular-nums; }
 
 .summary { display: flex; gap: 10px; flex: 1; flex-wrap: wrap; }
@@ -150,6 +145,7 @@ body {
   cursor: pointer;
   transition: border-color .25s, background .25s, transform .08s;
   display: flex; flex-direction: column;
+  container-type: inline-size;   /* lets metric text scale to the card's width */
 }
 .enc-card:active { transform: scale(0.985); }
 
@@ -197,7 +193,8 @@ body {
 /* Three-up readings */
 .enc-body { display: flex; border-top: 1px solid var(--border); margin-top: auto; }
 .metric {
-  flex: 1; text-align: center; padding: 16px 8px 18px;
+  flex: 1; min-width: 0; overflow: hidden;
+  text-align: center; padding: 16px 6px 18px;
 }
 .metric + .metric { border-left: 1px solid var(--border); }
 .metric.mid { background: rgba(255,255,255,0.015); }
@@ -206,10 +203,12 @@ body {
   letter-spacing: 0.09em; color: var(--muted); margin-bottom: 8px;
 }
 .metric-value {
-  font-size: 3.1rem; font-weight: 800; line-height: 0.95;
+  font-size: 2.2rem;                          /* fallback for browsers without container queries */
+  font-size: clamp(1.5rem, 11cqi, 2.7rem);    /* scales to the card width where supported */
+  font-weight: 800; line-height: 0.95; white-space: nowrap;
   letter-spacing: -0.02em; font-variant-numeric: tabular-nums;
 }
-.metric-unit { font-size: 1.1rem; font-weight: 500; color: var(--muted); }
+.metric-unit { font-size: 0.9rem; font-weight: 500; color: var(--muted); }
 .metric-none { font-size: 1.3rem; color: var(--muted); padding: 12px 0; }
 
 /* reading text color follows status, out-of-range value forced red+blink */
