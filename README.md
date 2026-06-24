@@ -202,7 +202,7 @@ kiosk.sh          optional fullscreen browser launcher for a host-attached scree
 
 ## 🦗 Buy the animals some crickets
 
-Bask is free and always will be — no accounts, no upsells, no cloud. But if it saved one of your animals a rough night, or you just think it's neat, you can chip in a couple bucks toward the cricket fund. It goes straight to feeder insects, fresh substrate, and the occasional new sensor. The geckos say thanks. 🦎
+Bask is free and always will be, but if it saved one of your animals a rough night, or you just think it's neat, you can chip in a couple bucks toward the cricket fund.
 
 <p align="center">
   <a href="https://ko-fi.com/jlyfshhh"><img height="40" alt="Buy the animals crickets on Ko-fi" src="https://img.shields.io/badge/Ko--fi-Buy%20the%20animals%20crickets-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white"></a>
