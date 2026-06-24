@@ -36,13 +36,13 @@ It runs on hardware as small as a **Raspberry Pi Zero W**: the Pi only scans and
 ## How it works
 
 ```
-  Govee H5075 sensors            Host (e.g. Raspberry Pi)            Any display
+  Govee H5075 sensors          Host (e.g. Raspberry Pi)          Any display
   (in your enclosures)     ┌──────────────────────────────┐    (tablet / browser /
-                           │  scanner ──writes──┐          │     smart display)
-   temp / humidity / batt  │  (owns Bluetooth)  ▼          │
-        │  BLE adverts      │              readings.db      │  HTTP   ┌────────────┐
-        └─────────────────▶ │  web server ──reads─┘         │ ◀───────│  browser   │
-                           │  (FastAPI + serves the UI)     │  :8080  └────────────┘
+                           │  scanner ──writes──┐         │     smart display)
+   temp / humidity / batt  │  (owns Bluetooth)  ▼         │
+        │  BLE adverts     │              readings.db     │  HTTP   ┌────────────┐
+        └────────────────▶ │  web server ──reads─┘        │ ◀───────│  browser   │
+                           │  (FastAPI + serves the UI)   │  :8080  └────────────┘
                            └──────────────────────────────┘
 ```
 
