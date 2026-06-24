@@ -86,6 +86,39 @@ body {
 .period-badge.day   { background: rgba(242,165,22,0.14); color: var(--warning); border-color: var(--warning-border); }
 .period-badge.night { background: rgba(59,130,246,0.16); color: #7fb0ff; border-color: #2f4d80; }
 
+/* ── Herpstat thermostat strip ── */
+.tstat-strip {
+  display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+  padding: 8px 18px; overflow-x: auto;
+  background: var(--surface); border-bottom: 1px solid var(--border);
+}
+.tstat-label {
+  font-size: 0.7rem; font-weight: 800; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--muted); flex-shrink: 0;
+}
+.tchip {
+  display: flex; align-items: baseline; gap: 8px; flex-shrink: 0;
+  padding: 6px 14px; border-radius: 10px;
+  background: var(--surface2); border: 1px solid var(--border);
+}
+.tchip .tc-name { font-size: 0.92rem; font-weight: 800; }
+.tchip .tc-temp { font-size: 1.15rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+.tchip.ok .tc-temp { color: var(--ok); }
+.tchip .tc-sub { font-size: 0.78rem; color: var(--muted); white-space: nowrap; }
+.tchip.alarm { border-color: var(--danger); background: var(--danger-bg); }
+.tchip.alarm .tc-temp { color: var(--danger); }
+.tchip.offline { opacity: 0.55; }
+
+/* status dot + test result used in the Manage → Thermostats pane */
+.tdot { display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+  margin-right: 8px; background: var(--muted); vertical-align: middle; }
+.tdot.ok { background: var(--ok); }
+.tdot.bad { background: var(--danger); }
+.tdot.off { background: var(--border); }
+.test-result { margin-top: 8px; font-size: 0.85rem; min-height: 1.1em; color: var(--muted); }
+.test-result.ok { color: var(--ok); }
+.test-result.bad { color: var(--danger); }
+
 /* ── At-a-glance room status banner (readable across the room) ── */
 .status-banner {
   flex-shrink: 0;

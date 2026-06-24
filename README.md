@@ -30,6 +30,7 @@ It runs on hardware as small as a **Raspberry Pi Zero W**: the Pi only scans and
 - 🦎 **Enclosures + per-species ranges** — group a warm-side and cool-side sensor per enclosure; each species has its own acceptable temp/humidity ranges.
 - ☀️🌙 **Day / night ranges** — set different ranges for heat-on vs. heat-off (configurable schedule). The dashboard switches automatically and shows which set is active.
 - 🔋 **Battery + signal monitoring** — warns before a sensor dies or drops off.
+- 🌡️ **Herpstat thermostat monitoring** *(optional)* — add [Herpstat SpyderWeb](https://www.spyderrobotics.com/) thermostats by IP and see each output's live probe temp, setpoint, output %, and alarms in a compact strip. Hidden entirely until you add one.
 - 👆 **Touch-first UI** — built for a wall-mounted touchscreen, with proximity pairing (hold a sensor near the host to add it).
 - 🪶 **Tiny footprint** — two small Python processes and a vanilla-JS frontend. No build step, no framework, no database server.
 
@@ -144,9 +145,18 @@ Everything lives in `config.json` (created from `config.example.json`). You don'
 - **Sensors** — discovered Govee devices you've named.
 - **Enclosures** — a name + species + which sensor is the warm and cool side.
 - **Species** — acceptable ranges, each with a **day** set and an optional **night** set. The day/night schedule (e.g. 8am–8pm) is in **Settings**.
+- **Thermostats** *(optional)* — Herpstat SpyderWeb units to monitor, by IP. See below.
 - **Settings** — °F/°C, stale-after timeout, low-battery threshold, and the daytime-hours window.
 
 `config.example.json` ships with day/night ranges for eight common species as a starting point — see the disclaimer below.
+
+## Herpstat thermostats (optional)
+
+If you run [Herpstat SpyderWeb](https://www.spyderrobotics.com/) thermostats, Bask can show each unit's outputs — live probe temperature, setpoint, output %, and any alarms — in a compact strip above the enclosure grid. It reads each unit's built-in status page over your LAN; there's no cloud and nothing to install on the thermostat. **If you don't add any, the strip never appears.**
+
+**1. Enable the status page on each thermostat.** Bask reads `http://<unit-ip>/RAWSTATUS`, which is off by default. In the unit's network/web settings (via its touchscreen or the Spyder app), turn on the web **status page** (sometimes labelled "web enabled" / "status"). To confirm it's on, open `http://<unit-ip>/RAWSTATUS` in a browser — you should see a page of JSON. A static IP or DHCP reservation for each unit is recommended so its address doesn't change.
+
+**2. Add it in Bask.** Go to **⚙ Manage → Thermostats → + Add**, enter the unit's IP, and tap **⚡ Test connection** to verify before saving. Bask polls each unit every few seconds and caches the result, so an offline or slow unit never stalls the dashboard. Output names come straight from the thermostat, so naming an output after its enclosure (e.g. "Ball Python") lines the strip up with your cards.
 
 ## Displaying it
 

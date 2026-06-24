@@ -46,5 +46,6 @@
     "low_battery_pct": 20,
     "day_start_hour": 8,
     "day_end_hour": 20
-  }
+  },
+  "thermostats": []
 }

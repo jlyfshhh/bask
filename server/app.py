@@ -5,11 +5,13 @@ SQLite; here we only read them, group sensors into enclosures, evaluate them
 against per-species ranges, and serve the touch UI. Discovery ("add a sensor")
 reads the scanner's `discovered` table instead of starting its own scan.
 """
+import asyncio
 import datetime
 import json
 import logging
 import sys
 import time
+import urllib.request
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
@@ -39,6 +41,7 @@ def load_config() -> dict:
     cfg["settings"].setdefault("low_battery_pct", 20)
     cfg["settings"].setdefault("day_start_hour", 8)   # heat on  → day ranges
     cfg["settings"].setdefault("day_end_hour", 20)    # heat off → night ranges
+    cfg.setdefault("thermostats", [])                 # optional Herpstat SpyderWeb units
     return cfg
 
 
@@ -93,10 +96,78 @@ def species_ranges(sp, is_day):
     return night if any(v is not None for v in night) else day
 
 
+# ── Herpstat thermostat polling (optional; local LAN, no cloud) ──────────────
+# Each Herpstat SpyderWeb unit serves its live state as JSON at /RAWSTATUS. A
+# background task polls the configured units and caches the latest reading, so a
+# slow or offline unit never blocks a dashboard request.
+
+HERPSTAT_TIMEOUT = 5    # seconds per request
+HERPSTAT_POLL = 10      # seconds between poll cycles
+_thermostats: dict[str, dict] = {}   # ip -> parsed status
+
+
+def _fetch_herpstat(ip: str) -> dict:
+    req = urllib.request.Request(f"http://{ip}/RAWSTATUS", headers={"User-Agent": "bask"})
+    with urllib.request.urlopen(req, timeout=HERPSTAT_TIMEOUT) as r:
+        return json.loads(r.read().decode())
+
+
+def _parse_herpstat(ip: str, raw: dict, name_override) -> dict:
+    sysv = raw.get("system", {})
+    safety_ok = "normal" in str(sysv.get("safetyrelay", "")).lower()
+    outputs = []
+    for i in range(1, int(sysv.get("numberofoutputs", 0)) + 1):
+        o = raw.get(f"output{i}")
+        if not o:
+            continue
+        temp = o.get("probereadingTEMP")
+        err = o.get("errorcode", 0)
+        hi, lo = o.get("highalarm"), o.get("lowalarm")
+        temp_alarm = bool(o.get("enablehighlowalarm") and temp is not None
+                          and hi is not None and lo is not None and (temp > hi or temp < lo))
+        outputs.append({
+            "name": o.get("outputnickname") or f"Output {i}",
+            "mode": o.get("outputmode"),
+            "temp": temp,
+            "setpoint": o.get("currentsetting"),
+            "output_pct": o.get("poweroutput"),
+            "heating": (o.get("poweroutput") or 0) > 0,
+            "error": None if err == 0 else o.get("errorcodedescription", "Error"),
+            "alarm": err != 0 or not safety_ok or temp_alarm,
+        })
+    return {
+        "ip": ip, "name": name_override or sysv.get("nickname") or ip,
+        "safety_ok": safety_ok, "reachable": True,
+        "last_seen": int(time.time()), "outputs": outputs,
+    }
+
+
+async def _herpstat_loop():
+    while True:
+        try:
+            for t in load_config().get("thermostats", []):
+                ip = t.get("ip")
+                if not ip or not t.get("enabled", True):
+                    continue
+                try:
+                    raw = await asyncio.to_thread(_fetch_herpstat, ip)
+                    _thermostats[ip] = _parse_herpstat(ip, raw, t.get("name"))
+                except Exception as e:
+                    prev = _thermostats.get(ip, {})
+                    _thermostats[ip] = {"ip": ip, "name": t.get("name") or prev.get("name") or ip,
+                                        "reachable": False, "outputs": prev.get("outputs", [])}
+                    log.warning(f"herpstat {ip} unreachable: {e}")
+        except Exception as e:
+            log.warning(f"herpstat loop error: {e}")
+        await asyncio.sleep(HERPSTAT_POLL)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()
+    poller = asyncio.create_task(_herpstat_loop())
     yield
+    poller.cancel()
 
 
 # No CORS middleware on purpose. The dashboard is served from the SAME origin as
@@ -227,11 +298,14 @@ def dashboard():
     counts = {"ok": 0, "warning": 0, "danger": 0, "stale": 0, "no_data": 0, "no_ranges": 0}
     for e in enclosures_out:
         counts[e["status"]] = counts.get(e["status"], 0) + 1
+    thermostats = [_thermostats[t["ip"]] for t in cfg.get("thermostats", [])
+                   if t.get("ip") in _thermostats]
     return {"enclosures": enclosures_out, "ungrouped": ungrouped,
             "counts": counts, "temp_unit": unit, "updated_at": now,
             "period": "day" if is_day else "night",
             "day_start_hour": cfg["settings"]["day_start_hour"],
-            "day_end_hour": cfg["settings"]["day_end_hour"]}
+            "day_end_hour": cfg["settings"]["day_end_hour"],
+            "thermostats": thermostats}
 
 
 # ── Discovery (reads the scanner's table; no BLE here) ───────────────────────
@@ -514,6 +588,83 @@ def update_settings(payload: SettingsPayload):
         cfg["settings"][k] = v
     save_config(cfg)
     return {"ok": True, "settings": cfg["settings"]}
+
+
+# ── Herpstat thermostat CRUD (optional feature) ──────────────────────────────
+# Units are keyed by their LAN IP. The background poller (_herpstat_loop) reads
+# this list each cycle, so adds/edits take effect within one poll interval with
+# no restart. The dashboard strip stays hidden until at least one unit is added.
+
+class ThermostatPayload(BaseModel):
+    ip: str = Field(min_length=1, max_length=64)
+    name: str | None = Field(None, max_length=64)
+    enabled: bool = True
+
+
+class ThermostatTest(BaseModel):
+    ip: str = Field(min_length=1, max_length=64)
+
+
+@app.get("/api/thermostats")
+def list_thermostats():
+    cfg = load_config()
+    out = [{**t, "status": _thermostats.get(t.get("ip"), {})}
+           for t in cfg.get("thermostats", [])]
+    return {"thermostats": out, "temp_unit": cfg["settings"]["temp_unit"]}
+
+
+@app.post("/api/thermostats/test")
+def test_thermostat(payload: ThermostatTest):
+    """Probe an IP for a Herpstat /RAWSTATUS page before saving it.
+
+    Sync handler → FastAPI runs it in a threadpool, so the (up to 5s) blocking
+    fetch never stalls the event loop. Lets the Manage UI tell the user up front
+    whether the unit's status page is enabled and reachable.
+    """
+    ip = payload.ip.strip()
+    try:
+        parsed = _parse_herpstat(ip, _fetch_herpstat(ip), None)
+    except Exception as e:
+        return {"ok": False, "error": f"Could not reach {ip} — is the status page enabled? ({e})"}
+    return {"ok": True, "name": parsed["name"],
+            "outputs": [o["name"] for o in parsed["outputs"]]}
+
+
+@app.post("/api/thermostats")
+def add_thermostat(payload: ThermostatPayload):
+    cfg = load_config()
+    ip = payload.ip.strip()
+    if any(t.get("ip") == ip for t in cfg["thermostats"]):
+        raise HTTPException(400, "Thermostat already added")
+    cfg["thermostats"].append({"ip": ip, "name": payload.name, "enabled": payload.enabled})
+    save_config(cfg)
+    return {"ok": True}
+
+
+@app.put("/api/thermostats/{ip}")
+def update_thermostat(ip: str, payload: ThermostatPayload):
+    cfg = load_config()
+    new_ip = payload.ip.strip()
+    for t in cfg["thermostats"]:
+        if t.get("ip") == ip:
+            t["ip"], t["name"], t["enabled"] = new_ip, payload.name, payload.enabled
+            save_config(cfg)
+            if new_ip != ip:
+                _thermostats.pop(ip, None)   # drop stale cache under the old IP
+            return {"ok": True}
+    raise HTTPException(404, "Thermostat not found")
+
+
+@app.delete("/api/thermostats/{ip}")
+def delete_thermostat(ip: str):
+    cfg = load_config()
+    before = len(cfg["thermostats"])
+    cfg["thermostats"] = [t for t in cfg["thermostats"] if t.get("ip") != ip]
+    if len(cfg["thermostats"]) == before:
+        raise HTTPException(404, "Thermostat not found")
+    save_config(cfg)
+    _thermostats.pop(ip, None)   # so it disappears from the dashboard immediately
+    return {"ok": True}
 
 
 # Static frontend is mounted last so it doesn't shadow the API routes.

@@ -52,6 +52,7 @@ async function refreshDashboard() {
     renderSummary(data.counts);
     renderStatusBanner(data);
     renderPeriod(data);
+    renderThermostats(data);
     renderGrid(data);
     const t = new Date(data.updated_at * 1000);
     document.getElementById("updated").textContent =
@@ -135,6 +136,32 @@ function renderPeriod(data) {
   el.innerHTML = `<span class="pi-ico">${isDay ? "☀️" : "🌙"}</span>` +
                  `<span class="pi-txt">${isDay ? "Day" : "Night"}</span>`;
   el.title = isDay ? `Day ranges (${win})` : `Night ranges (outside ${win})`;
+}
+
+// Compact Herpstat thermostat strip: live probe temp → setpoint, output %, alarms.
+function renderThermostats(data) {
+  const el = document.getElementById("thermostat-strip");
+  if (!el) return;
+  const units = data.thermostats || [];
+  if (!units.length) { el.style.display = "none"; return; }
+  el.style.display = "flex";
+  const u = "°" + _tempUnit;
+  const chips = [];
+  for (const unit of units) {
+    if (!unit.reachable) {
+      chips.push(`<div class="tchip offline"><span class="tc-name">${esc(unit.name)}</span>` +
+                 `<span class="tc-sub">offline</span></div>`);
+      continue;
+    }
+    for (const o of unit.outputs) {
+      chips.push(`<div class="tchip ${o.alarm ? "alarm" : "ok"}">
+        <span class="tc-name">${esc(o.name)}</span>
+        <span class="tc-temp">${o.temp ?? "—"}${u}</span>
+        <span class="tc-sub">→ ${o.setpoint ?? "—"}${u} · ${o.output_pct ?? 0}%${o.heating ? " 🔥" : ""}${o.error ? " · " + esc(o.error) : ""}</span>
+      </div>`);
+    }
+  }
+  el.innerHTML = `<span class="tstat-label">Thermostats</span>${chips.join("")}`;
 }
 
 function renderGrid(data) {
@@ -302,17 +329,21 @@ function switchTab(name) {
 }
 
 async function loadManageData() {
-  const [sres, eres, spres] = await Promise.all([
-    api("GET", "/api/sensors"), api("GET", "/api/enclosures"), api("GET", "/api/species"),
+  const [sres, eres, spres, tres] = await Promise.all([
+    api("GET", "/api/sensors"), api("GET", "/api/enclosures"),
+    api("GET", "/api/species"), api("GET", "/api/thermostats"),
   ]);
   _sensors = sres.sensors; _enclosures = eres.enclosures; _species = spres.species;
+  _thermostats_cfg = tres.thermostats;
   _settings = sres.settings;
   renderEnclosuresPane();
   renderSensorsPane();
   renderSpeciesPane();
+  renderThermostatsPane();
   renderSettingsPane();
 }
 let _settings = {};
+let _thermostats_cfg = [];
 
 // ── Enclosures pane ──────────────────────────────────────────
 function renderEnclosuresPane() {
@@ -743,6 +774,105 @@ async function saveSpecies(id) {
 async function deleteSpecies(id) {
   if (!confirm("Delete this species? Enclosures using it will lose their ranges.")) return;
   await api("DELETE", `/api/species/${id}`);
+  closeEditor(); await loadManageData();
+}
+
+// ── Thermostats pane (optional Herpstat SpyderWeb units) ─────
+// Add a unit by LAN IP; the dashboard then shows a compact live strip. The unit
+// must have its web status page enabled so http://<ip>/RAWSTATUS responds.
+function renderThermostatsPane() {
+  const u = "°" + _tempUnit;
+  const rows = _thermostats_cfg.map(t => {
+    const st = t.status || {};
+    const reach = st.reachable;
+    const dotCls = t.enabled === false ? "off" : reach ? "ok" : reach === false ? "bad" : "";
+    let sub;
+    if (t.enabled === false) sub = "Disabled";
+    else if (reach) sub = (st.outputs || []).map(o =>
+      `${esc(o.name)} ${o.temp ?? "—"}${u}→${o.setpoint ?? "—"}${u}`).join(" · ") || "No outputs";
+    else if (reach === false) sub = "Offline — check the IP and that the status page is on";
+    else sub = "Connecting…";
+    return `
+      <div class="row"><div class="row-top">
+        <div class="row-info">
+          <div class="row-name"><span class="tdot ${dotCls}"></span>${esc(st.name || t.name || t.ip)}</div>
+          <div class="row-sub">${sub}</div>
+          <div class="row-mac">${esc(t.ip)}</div>
+        </div>
+        <button class="btn sm" onclick="editThermostat('${esc(t.ip)}')">Edit</button>
+      </div></div>`;
+  }).join("");
+  document.getElementById("pane-thermostats").innerHTML = `
+    <div class="pane-toolbar"><h2>Herpstat thermostats</h2>
+      <button class="btn primary" onclick="editThermostat(null)">+ Add</button></div>
+    <div class="scan-hint">Monitor Herpstat SpyderWeb thermostats on your network. On each unit, enable its
+      <b>web status page</b> so <code>http://&lt;ip&gt;/RAWSTATUS</code> responds, then add its IP here.
+      The dashboard strip appears once a unit is added.</div>
+    ${rows || `<div class="muted-note">No thermostats yet. This feature is optional — add one to show the live strip.</div>`}`;
+}
+
+function editThermostat(ip) {
+  const t = ip ? _thermostats_cfg.find(x => x.ip === ip) : null;
+  openEditor(`
+    <div class="sheet-head"><h2>${t ? "Edit" : "Add"} thermostat</h2>
+      <button class="close-btn" onclick="closeEditor()">✕</button></div>
+    <div class="field"><label>IP address</label>
+      <input type="text" id="tf-ip" value="${esc(t?.ip || "")}" placeholder="e.g. 192.168.1.50"
+             inputmode="decimal" autocomplete="off"></div>
+    <div class="field"><label>Display name (optional — defaults to the unit's own name)</label>
+      <input type="text" id="tf-name" value="${esc(t?.name || "")}" placeholder="e.g. Rack 1 Herpstat"></div>
+    <label class="night-toggle">
+      <input type="checkbox" id="tf-enabled" ${t?.enabled === false ? "" : "checked"}>
+      <span>Enabled (poll this unit)</span>
+    </label>
+    <div class="field"><button class="btn ghost sm" onclick="testThermostat()">⚡ Test connection</button>
+      <div id="tf-test" class="test-result"></div></div>
+    <div class="form-actions">
+      ${t ? `<button class="btn danger" onclick="deleteThermostat('${esc(t.ip)}')">Delete</button>` : ""}
+      <button class="btn primary" onclick="saveThermostat(${t ? `'${esc(t.ip)}'` : "null"})">Save</button>
+    </div>`);
+}
+
+async function testThermostat() {
+  const ip = document.getElementById("tf-ip").value.trim();
+  const out = document.getElementById("tf-test");
+  if (!ip) { out.className = "test-result"; out.textContent = ""; return; }
+  out.className = "test-result"; out.textContent = "Testing…";
+  try {
+    const r = await api("POST", "/api/thermostats/test", { ip });
+    if (r.ok) {
+      out.className = "test-result ok";
+      out.innerHTML = `✓ Connected: <b>${esc(r.name)}</b> · ${r.outputs.length} output` +
+        `${r.outputs.length !== 1 ? "s" : ""}${r.outputs.length ? " (" + r.outputs.map(esc).join(", ") + ")" : ""}`;
+    } else {
+      out.className = "test-result bad";
+      out.textContent = "✗ " + r.error;
+    }
+  } catch (e) {
+    out.className = "test-result bad";
+    out.textContent = "✗ Test failed — is the server reachable?";
+  }
+}
+
+async function saveThermostat(ip) {
+  const newIp = document.getElementById("tf-ip").value.trim();
+  if (!newIp) return;
+  const name = document.getElementById("tf-name").value.trim() || null;
+  const enabled = document.getElementById("tf-enabled").checked;
+  const body = { ip: newIp, name, enabled };
+  try {
+    if (ip) await api("PUT", `/api/thermostats/${encodeURIComponent(ip)}`, body);
+    else await api("POST", "/api/thermostats", body);
+  } catch (e) {
+    showToast(ip ? "Save failed" : "That IP is already added");
+    return;
+  }
+  closeEditor(); await loadManageData();
+}
+
+async function deleteThermostat(ip) {
+  if (!confirm("Remove this thermostat from the dashboard?")) return;
+  await api("DELETE", `/api/thermostats/${encodeURIComponent(ip)}`);
   closeEditor(); await loadManageData();
 }
 

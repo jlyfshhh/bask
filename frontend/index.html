@@ -36,6 +36,9 @@
   <!-- Big at-a-glance room status — readable from across the room -->
   <div id="status-banner" class="status-banner"></div>
 
+  <!-- Compact Herpstat thermostat strip (hidden unless units are configured) -->
+  <div id="thermostat-strip" class="tstat-strip"></div>
+
   <!-- ── Dashboard grid (fixed order, color-coded) ── -->
   <main id="grid"></main>
   <div id="updated" class="updated-stamp"></div>
@@ -53,6 +56,7 @@
           <button class="mtab active" data-tab="enclosures" onclick="switchTab('enclosures')">Enclosures</button>
           <button class="mtab" data-tab="sensors" onclick="switchTab('sensors')">Sensors</button>
           <button class="mtab" data-tab="species" onclick="switchTab('species')">Species</button>
+          <button class="mtab" data-tab="thermostats" onclick="switchTab('thermostats')">Thermostats</button>
           <button class="mtab" data-tab="settings" onclick="switchTab('settings')">Settings</button>
         </div>
         <button class="close-btn" onclick="closeManage()" aria-label="Close">✕</button>
@@ -61,6 +65,7 @@
         <section class="pane active" id="pane-enclosures"></section>
         <section class="pane" id="pane-sensors"></section>
         <section class="pane" id="pane-species"></section>
+        <section class="pane" id="pane-thermostats"></section>
         <section class="pane" id="pane-settings"></section>
       </div>
     </div>
