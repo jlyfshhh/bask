@@ -11,6 +11,7 @@
   <a href="#license"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-F2A516"></a>
   <img alt="Python" src="https://img.shields.io/badge/python-3.11%2B-blue">
   <img alt="No build step" src="https://img.shields.io/badge/frontend-vanilla%20JS-success">
+  <a href="https://ko-fi.com/jlyfshhh"><img alt="Ko-fi" src="https://img.shields.io/badge/Ko--fi-buy%20crickets-FF5E5B?logo=ko-fi&logoColor=white"></a>
 </p>
 
 ---
@@ -198,6 +199,14 @@ config.example.json   copy to config.json
 start.sh          run scanner + web server together
 kiosk.sh          optional fullscreen browser launcher for a host-attached screen
 ```
+
+## 🦗 Buy the animals some crickets
+
+Bask is free and always will be — no accounts, no upsells, no cloud. But if it saved one of your animals a rough night, or you just think it's neat, you can chip in a couple bucks toward the cricket fund. It goes straight to feeder insects, fresh substrate, and the occasional new sensor. The geckos say thanks. 🦎
+
+<p align="center">
+  <a href="https://ko-fi.com/jlyfshhh"><img height="40" alt="Buy the animals crickets on Ko-fi" src="https://img.shields.io/badge/Ko--fi-Buy%20the%20animals%20crickets-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white"></a>
+</p>
 
 ## License
 
