@@ -15,7 +15,7 @@
 
 ---
 
-Bask is a small, self-hosted dashboard for reptile/amphibian keepers (or anyone with [Govee H5075](https://www.govee.com/) sensors). It listens to your sensors over Bluetooth, checks each enclosure against **per-species day/night ranges**, and shows a big green "all good" — or a red alert that names exactly what's wrong.
+Bask is a small, self-hosted dashboard for reptile/amphibian keepers (or anyone with [Govee H5075](https://a.co/d/0f8luxOE) sensors). It listens to your sensors over Bluetooth, checks each enclosure against **per-species day/night ranges**, and shows a big green "all good" — or a red alert that names exactly what's wrong.
 
 It runs on hardware as small as a **Raspberry Pi Zero W**: the Pi only scans and serves; any browser displays it. No cloud, no account, no internet required.
 
