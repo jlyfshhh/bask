@@ -33,6 +33,18 @@ jobs:
       - name: Pin that ref into the install stage
         run: sed -i "s|@BASK_REF@|${{ steps.ref.outputs.ref }}|" image/stage-bask/01-run-chroot.sh
 
+      # pi-gen refuses to build without a user password. We bake a random,
+      # never-recorded one so the public image ships with NO known default
+      # credentials. Non-technical users never log in (they use the web UI);
+      # advanced users set their own username/password in Raspberry Pi Imager,
+      # which overrides this at flash time.
+      - name: Generate a throwaway first-user password
+        id: pw
+        run: |
+          PW="$(openssl rand -base64 24)"
+          echo "::add-mask::$PW"
+          echo "value=$PW" >> "$GITHUB_OUTPUT"
+
       - name: Build the image
         id: build
         uses: usimd/pi-gen-action@v1
@@ -40,8 +52,7 @@ jobs:
           image-name: bask
           hostname: bask
           username: bask
-          # password left empty → the account is locked. Users set their own
-          # via Raspberry Pi Imager's customisation, or just use the web UI.
+          password: ${{ steps.pw.outputs.value }}
           enable-ssh: '1'
           disable-first-boot-user-rename: '1'
           stage-list: stage0 stage1 stage2 ./image/stage-bask
