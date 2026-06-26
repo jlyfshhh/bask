@@ -1,0 +1,6 @@
+git
+python3-venv
+python3-pip
+avahi-daemon
+bluez
+rfkill

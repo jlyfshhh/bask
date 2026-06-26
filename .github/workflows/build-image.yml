@@ -1,0 +1,62 @@
+name: Build SD-card image
+
+# Builds a ready-to-flash Raspberry Pi OS image with Bask preinstalled.
+# Runs on demand (Actions tab → Run workflow) and automatically on a version
+# tag (e.g. v1.0.0), where the finished image is attached to the GitHub Release.
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write   # attach the image to the Release on tag builds
+
+jobs:
+  build-image:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Decide which Bask ref to bake in
+        id: ref
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "ref=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=main" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Pin that ref into the install stage
+        run: sed -i "s|@BASK_REF@|${{ steps.ref.outputs.ref }}|" image/stage-bask/01-run-chroot.sh
+
+      - name: Build the image
+        id: build
+        uses: usimd/pi-gen-action@v1
+        with:
+          image-name: bask
+          hostname: bask
+          username: bask
+          # password left empty → the account is locked. Users set their own
+          # via Raspberry Pi Imager's customisation, or just use the web UI.
+          enable-ssh: '1'
+          disable-first-boot-user-rename: '1'
+          stage-list: stage0 stage1 stage2 ./image/stage-bask
+          release: trixie
+          compression: xz
+          increase-runner-disk-size: true
+          verbose-output: true
+
+      - name: Upload image as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bask-image
+          path: ${{ steps.build.outputs.image-path }}
+          if-no-files-found: error
+
+      - name: Attach image to the Release (tag builds only)
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.build.outputs.image-path }}
