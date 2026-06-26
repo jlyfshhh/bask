@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bask — know your animal room is okay, at a glance</title>
+<meta name="description" content="Bask is a free, self-hosted dashboard for reptile & amphibian keepers. It reads your Govee sensors over Bluetooth and shows a big green 'all good' — or a red alert that names exactly what's wrong. Runs on a cheap Raspberry Pi. No cloud, no account.">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+
+<!-- Social / link previews -->
+<meta property="og:type" content="website">
+<meta property="og:title" content="Bask — know your animal room is okay, at a glance">
+<meta property="og:description" content="A free, self-hosted temperature & humidity dashboard for reptile keepers. Green means good. Runs on a cheap Raspberry Pi — no cloud, no account.">
+<meta property="og:url" content="https://jlyfshhh.github.io/bask/">
+<meta property="og:image" content="https://jlyfshhh.github.io/bask/dashboard.svg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Bask — know your animal room is okay, at a glance">
+<meta name="twitter:description" content="A free, self-hosted temperature & humidity dashboard for reptile keepers. Green means good.">
+<meta name="twitter:image" content="https://jlyfshhh.github.io/bask/dashboard.svg">
+
+<style>
+  :root{
+    --amber:#F2A516; --amber-deep:#E0701A; --cream:#FFF3D6;
+    --ink:#22262e; --muted:#5c6675; --line:#ece7dd;
+    --bg:#fffdf8; --bg-warm:#fdf4e3; --card:#ffffff;
+    --ok:#2e9e5b; --danger:#e0533d;
+    --radius:18px; --maxw:1080px;
+    --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;font-family:var(--font);color:var(--ink);background:var(--bg);line-height:1.6;-webkit-font-smoothing:antialiased}
+  a{color:var(--amber-deep);text-decoration:none}
+  a:hover{text-decoration:underline}
+  h1,h2,h3{line-height:1.15;letter-spacing:-0.02em;margin:0}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 22px}
+  section{padding:72px 0}
+  .eyebrow{text-transform:uppercase;letter-spacing:.12em;font-size:.78rem;font-weight:800;color:var(--amber-deep)}
+
+  /* Header */
+  header{position:sticky;top:0;z-index:50;background:rgba(255,253,248,.85);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+  .nav{display:flex;align-items:center;justify-content:space-between;height:64px}
+  .nav img{height:30px;display:block}
+  .nav-links{display:flex;align-items:center;gap:22px;font-weight:600;font-size:.95rem}
+  .nav-links a{color:var(--ink)}
+  .nav-cta{background:var(--amber);color:#3a2a05!important;padding:9px 16px;border-radius:999px;font-weight:700}
+  .nav-cta:hover{background:var(--amber-deep);color:#fff!important;text-decoration:none}
+  @media(max-width:620px){.nav-links .hide-sm{display:none}}
+
+  /* Hero */
+  .hero{background:linear-gradient(180deg,var(--bg-warm),var(--bg));padding:64px 0 40px;text-align:center}
+  .hero h1{font-size:clamp(2.1rem,5.5vw,3.4rem);font-weight:800}
+  .hero .sun{font-size:2.2rem}
+  .hero p.lead{font-size:clamp(1.05rem,2.4vw,1.3rem);color:var(--muted);max-width:640px;margin:18px auto 0}
+  .cta-row{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin:30px 0 8px}
+  .btn{display:inline-flex;align-items:center;gap:9px;padding:14px 24px;border-radius:999px;font-weight:700;font-size:1.02rem;border:2px solid transparent;cursor:pointer}
+  .btn-primary{background:var(--amber);color:#3a2a05}
+  .btn-primary:hover{background:var(--amber-deep);color:#fff;text-decoration:none}
+  .btn-ghost{background:#fff;border-color:var(--line);color:var(--ink)}
+  .btn-ghost:hover{border-color:var(--amber);text-decoration:none}
+  .hero-note{font-size:.9rem;color:var(--muted);margin-top:6px}
+
+  /* Browser mockup */
+  .mock{max-width:860px;margin:42px auto 0;border-radius:16px;overflow:hidden;border:1px solid var(--line);box-shadow:0 30px 60px -28px rgba(80,60,20,.35)}
+  .mock-bar{display:flex;align-items:center;gap:8px;padding:11px 14px;background:#f3eee4;border-bottom:1px solid var(--line)}
+  .mock-bar i{width:11px;height:11px;border-radius:50%;background:#d9d2c4;display:block}
+  .mock-url{margin-left:10px;font-size:.78rem;color:var(--muted);background:#fff;border-radius:6px;padding:3px 12px}
+  .mock img{display:block;width:100%}
+
+  /* Idea band */
+  .idea{background:var(--ink);color:#fdf6e7;text-align:center}
+  .idea h2{font-size:clamp(1.5rem,4vw,2.1rem);font-weight:800;max-width:720px;margin:0 auto}
+  .idea .chips{display:flex;gap:12px;justify-content:center;margin-top:26px;flex-wrap:wrap}
+  .chip{padding:9px 18px;border-radius:999px;font-weight:700;font-size:.95rem}
+  .chip.good{background:rgba(46,158,91,.18);color:#7ee3a6;border:1px solid rgba(46,158,91,.4)}
+  .chip.bad{background:rgba(224,83,61,.16);color:#ff9d8c;border:1px solid rgba(224,83,61,.4)}
+
+  /* Section heads */
+  .shead{text-align:center;max-width:640px;margin:0 auto 46px}
+  .shead h2{font-size:clamp(1.6rem,4vw,2.3rem);font-weight:800;margin-top:8px}
+  .shead p{color:var(--muted);margin:14px 0 0;font-size:1.05rem}
+
+  /* Feature grid */
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:18px}
+  .feat{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:24px}
+  .feat .ico{font-size:1.7rem}
+  .feat h3{font-size:1.12rem;margin:12px 0 6px}
+  .feat p{margin:0;color:var(--muted);font-size:.96rem}
+
+  /* Need */
+  .need{background:var(--bg-warm)}
+  .need .grid{max-width:880px;margin:0 auto}
+  .need .feat{text-align:center;background:#fff}
+
+  /* Steps */
+  .flow{max-width:940px;margin:0 auto 40px;display:block}
+  .flow img{width:100%;display:block}
+  .steps{display:grid;gap:18px;max-width:780px;margin:0 auto}
+  .step{display:flex;gap:18px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:22px}
+  .step .n{flex:none;width:38px;height:38px;border-radius:50%;background:var(--amber);color:#3a2a05;font-weight:800;display:flex;align-items:center;justify-content:center;font-size:1.05rem}
+  .step h3{font-size:1.12rem;margin:0 0 4px}
+  .step p{margin:0;color:var(--muted);font-size:.97rem}
+  .step code{background:#f4eee3;border:1px solid var(--line);border-radius:6px;padding:2px 7px;font-size:.86em}
+  .step .url{font-weight:700;color:var(--amber-deep)}
+  .alt{max-width:780px;margin:22px auto 0;background:#fff;border:1px dashed var(--line);border-radius:14px;padding:16px 20px;font-size:.93rem;color:var(--muted)}
+  .alt code{background:#f4eee3;border:1px solid var(--line);border-radius:6px;padding:2px 7px}
+
+  /* FAQ */
+  .faq{max-width:780px;margin:0 auto;display:grid;gap:12px}
+  details{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:4px 20px}
+  summary{cursor:pointer;font-weight:700;padding:16px 0;list-style:none}
+  summary::-webkit-details-marker{display:none}
+  summary::after{content:"+";float:right;color:var(--amber-deep);font-weight:800}
+  details[open] summary::after{content:"–"}
+  details p{margin:0 0 16px;color:var(--muted)}
+
+  /* Footer */
+  footer{background:var(--ink);color:#cdd3dc;padding:54px 0 40px;text-align:center}
+  footer .flogo{height:34px;margin-bottom:14px}
+  footer a{color:#fdc873}
+  .flinks{display:flex;gap:22px;justify-content:center;flex-wrap:wrap;margin:18px 0;font-weight:600}
+  footer .fine{font-size:.84rem;color:#8d96a3;max-width:640px;margin:14px auto 0}
+  .disc{font-size:.8rem;color:#7b8493;margin-top:18px}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap nav">
+    <a href="#top"><img src="bask-logo.svg" alt="Bask"></a>
+    <nav class="nav-links">
+      <a class="hide-sm" href="#what">What it is</a>
+      <a class="hide-sm" href="#start">Get started</a>
+      <a href="https://github.com/jlyfshhh/bask">GitHub</a>
+      <a class="nav-cta" href="#start">Get started</a>
+    </nav>
+  </div>
+</header>
+
+<a id="top"></a>
+<section class="hero">
+  <div class="wrap">
+    <div class="eyebrow">Free &amp; open-source · for reptile &amp; amphibian keepers</div>
+    <h1>Know your animal room is okay — <span style="color:var(--amber-deep)">at a glance.</span></h1>
+    <p class="lead">Bask watches the temperature and humidity in every enclosure and shows one simple answer from across the room: a big green <b>“all good,”</b> or a red alert that tells you exactly what’s wrong.</p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="#start">☀️ Get started</a>
+      <a class="btn btn-ghost" href="https://github.com/jlyfshhh/bask">View on GitHub</a>
+    </div>
+    <div class="hero-note">No cloud · no account · no monthly fee · your data stays in your home</div>
+
+    <div class="mock">
+      <div class="mock-bar"><i></i><i></i><i></i><span class="mock-url">bask.local</span></div>
+      <img src="dashboard.svg" alt="The Bask dashboard showing enclosures with temperature and humidity, most green and one flagged">
+    </div>
+  </div>
+</section>
+
+<section class="idea">
+  <div class="wrap">
+    <h2>Walk into your animal room and just <em>know</em> — without checking a single gauge.</h2>
+    <div class="chips">
+      <span class="chip good">✓ Green = everything’s in range</span>
+      <span class="chip bad">⚠ Red = this enclosure, this problem</span>
+    </div>
+  </div>
+</section>
+
+<section id="what">
+  <div class="wrap">
+    <div class="shead">
+      <div class="eyebrow">What it does</div>
+      <h2>Everything you need to keep an eye on your animals</h2>
+      <p>Bask reads the same affordable Govee sensors many keepers already use, and turns them into a calm, at-a-glance wall display.</p>
+    </div>
+    <div class="grid">
+      <div class="feat"><div class="ico">🟢</div><h3>One honest status</h3><p>A giant green “all good,” or a red banner naming the out-of-range enclosure and exactly which reading is off.</p></div>
+      <div class="feat"><div class="ico">🦎</div><h3>Per-species ranges</h3><p>Set the right warm-side, cool-side, and humidity targets per species. Ships with sensible starting points for common reptiles.</p></div>
+      <div class="feat"><div class="ico">☀️🌙</div><h3>Day &amp; night aware</h3><p>Different targets for lights-on and lights-off, switched automatically — so a normal night-time drop doesn’t cry wolf.</p></div>
+      <div class="feat"><div class="ico">📡</div><h3>Wireless &amp; passive</h3><p>Reads your Govee sensors over Bluetooth. No pairing dance, no Govee account, no wires across the room.</p></div>
+      <div class="feat"><div class="ico">🔋</div><h3>Battery &amp; signal alerts</h3><p>Warns you before a sensor’s battery dies or drops off — so you’re never blind without knowing it.</p></div>
+      <div class="feat"><div class="ico">🔒</div><h3>Private by design</h3><p>Runs entirely in your home on a tiny computer. Nothing is sent to the cloud. No subscription, ever.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="need" id="need">
+  <div class="wrap">
+    <div class="shead">
+      <div class="eyebrow">What you’ll need</div>
+      <h2>Three simple things</h2>
+      <p>A one-time setup with inexpensive, easy-to-find parts. No soldering, no wiring.</p>
+    </div>
+    <div class="grid">
+      <div class="feat"><div class="ico">🥧</div><h3>A Raspberry Pi</h3><p>Any current model — a Pi 4 or Pi 3B+ is the easiest to buy; a Zero 2 W is the tiniest. Plus a microSD card and a power supply.</p></div>
+      <div class="feat"><div class="ico">🌡️</div><h3>Govee H5075 sensors</h3><p>One small thermo-hygrometer in each enclosure you want to watch. Affordable and widely available.</p></div>
+      <div class="feat"><div class="ico">📱</div><h3>Any screen</h3><p>View it on your phone, a tablet, an old monitor, or a smart display — anything with a web browser on your Wi-Fi.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="start">
+  <div class="wrap">
+    <div class="shead">
+      <div class="eyebrow">Getting started</div>
+      <h2>Up and running in about 20 minutes</h2>
+      <p>The easy way: write a ready-made Bask card with the official Raspberry Pi app, plug it in, and open it in your browser. No code, no command line.</p>
+    </div>
+
+    <a class="flow"><img src="setup-flow.svg" alt="Four steps: flash the card, plug it in, it runs itself, open bask.local"></a>
+
+    <div class="steps">
+      <div class="step"><div class="n">1</div><div>
+        <h3>Write the Bask card</h3>
+        <p>Download the free <b>Raspberry Pi Imager</b> app on your computer. Choose the <b>Bask image</b>, pick your SD card, and in its settings screen type your <b>Wi-Fi name and password</b>. Click write.</p>
+      </div></div>
+      <div class="step"><div class="n">2</div><div>
+        <h3>Plug it in</h3>
+        <p>Put the card in the Raspberry Pi and connect the power. The first start-up takes a couple of minutes while it quietly joins your Wi-Fi — there’s nothing to watch.</p>
+      </div></div>
+      <div class="step"><div class="n">3</div><div>
+        <h3>It runs itself</h3>
+        <p>Bask starts automatically every time the Pi has power. No logging in, no commands — it’s an appliance now.</p>
+      </div></div>
+      <div class="step"><div class="n">4</div><div>
+        <h3>Open it &amp; add your sensors</h3>
+        <p>On any device on your Wi-Fi, open <span class="url">http://bask.local:8080</span>. Tap <b>⚙ Manage → Pair by proximity</b>, hold a Govee sensor near the Pi, and assign it to an enclosure. Done!</p>
+      </div></div>
+    </div>
+
+    <div class="cta-row" style="margin-top:34px">
+      <a class="btn btn-primary" href="https://github.com/jlyfshhh/bask/releases/latest">⬇️ Download the Bask image</a>
+      <a class="btn btn-ghost" href="https://github.com/jlyfshhh/bask/blob/main/docs/SETUP.md">Full step-by-step guide</a>
+    </div>
+    <div class="alt">
+      <b>Already comfortable with a Raspberry Pi?</b> Skip the image — flash plain Raspberry Pi OS, then run one line:
+      <code>curl -fsSL https://raw.githubusercontent.com/jlyfshhh/bask/main/get-bask.sh | bash</code>
+    </div>
+  </div>
+</section>
+
+<section style="background:var(--bg-warm)">
+  <div class="wrap">
+    <div class="shead"><div class="eyebrow">Good to know</div><h2>Questions keepers ask</h2></div>
+    <div class="faq">
+      <details><summary>Is it really free?</summary><p>Yes — completely free and open-source under the MIT license. There’s no account, no subscription, and nothing is sold. If it helps and you’d like to chip in toward the animals’ crickets, there’s an optional tip jar, but it’s never required.</p></details>
+      <details><summary>Do I need to be techy?</summary><p>No. If you can install an app and type your Wi-Fi password, you can set up Bask the easy way with the prebuilt image. The whole process is a one-time, ~20-minute setup with a visual walkthrough.</p></details>
+      <details><summary>Will it work for my animals?</summary><p>Bask works for any keeper using Govee H5075 sensors. It ships with starting temperature and humidity ranges for several common reptiles, and you can adjust every number to match your species and your room. <b>It’s a monitoring aid, not veterinary advice</b> — always verify against trusted care resources.</p></details>
+      <details><summary>Is my information private?</summary><p>Completely. Bask runs entirely on your own little Raspberry Pi inside your home and never sends anything to the internet or any company. It’s designed to live on your home Wi-Fi only.</p></details>
+      <details><summary>Can I show it on a wall display?</summary><p>Yes. Open it on a cheap wall-mounted tablet, an old phone, a monitor, or a smart display like an Amazon Echo Show — anything with a web browser on your network.</p></details>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <img class="flogo" src="bask-logo.svg" alt="Bask">
+    <div class="flinks">
+      <a href="https://github.com/jlyfshhh/bask">GitHub</a>
+      <a href="https://github.com/jlyfshhh/bask/blob/main/docs/SETUP.md">Setup guide</a>
+      <a href="https://www.instagram.com/thebioactivekeeper">Instagram</a>
+      <a href="https://ko-fi.com/jlyfshhh">🦗 Buy crickets</a>
+    </div>
+    <p class="fine">Built by a reptile keeper who wanted to walk into the animal room and just know everything was okay. Follow the animals and bioactive builds behind Bask on Instagram <a href="https://www.instagram.com/thebioactivekeeper">@thebioactivekeeper</a>.</p>
+    <p class="disc">Free &amp; open-source (MIT). A monitoring aid, not a substitute for proper husbandry research. Built with the help of AI, reviewed and tested by a human.</p>
+  </div>
+</footer>
+
+</body>
+</html>

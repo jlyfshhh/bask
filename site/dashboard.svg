@@ -1,0 +1,196 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 516" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <rect width="1000" height="516" fill="#0d0f15"/>
+
+  <!-- top bar -->
+  <rect width="1000" height="64" fill="#161a24"/>
+  <line x1="0" y1="64.5" x2="1000" y2="64.5" stroke="#2b3142" stroke-width="1"/>
+  <g transform="translate(16,9) scale(0.34)">
+    <g stroke="#F2A516" stroke-width="6" stroke-linecap="round">
+      <line x1="60" y1="28" x2="60" y2="16"/>
+      <line x1="60" y1="28" x2="60" y2="16" transform="rotate(33 60 64)"/>
+      <line x1="60" y1="28" x2="60" y2="16" transform="rotate(-33 60 64)"/>
+      <line x1="60" y1="28" x2="60" y2="16" transform="rotate(66 60 64)"/>
+      <line x1="60" y1="28" x2="60" y2="16" transform="rotate(-66 60 64)"/>
+    </g>
+    <path d="M30 64 A30 30 0 0 1 90 64 Z" fill="#F2A516"/>
+    <path d="M47.5 64 A12.5 12.5 0 0 1 72.5 64 Z" fill="#FFF3D6"/>
+  </g>
+  <text x="54" y="33" font-size="22" font-weight="700" fill="#e0701a">bask</text>
+  <text x="18" y="53" font-size="11" fill="#8b93a7">Sun, Jun 22 · 7:42 PM</text>
+
+  <!-- summary pills -->
+  <rect x="430" y="19" width="78" height="26" rx="13" fill="#1f2433" stroke="#2b3142"/>
+  <circle cx="447" cy="32" r="5" fill="#f2a516"/>
+  <text x="458" y="36" font-size="12" font-weight="700" fill="#f2a516">1 check</text>
+  <rect x="516" y="19" width="62" height="26" rx="13" fill="#1f2433" stroke="#2b3142"/>
+  <circle cx="533" cy="32" r="5" fill="#2fbf5b"/>
+  <text x="544" y="36" font-size="12" font-weight="700" fill="#2fbf5b">7 ok</text>
+
+  <!-- day badge -->
+  <rect x="770" y="18" width="70" height="28" rx="14" fill="#2e2206" stroke="#8a6310"/>
+  <circle cx="788" cy="32" r="6" fill="#f2a516"/>
+  <text x="800" y="36" font-size="13" font-weight="700" fill="#f2a516">Day</text>
+  <!-- manage -->
+  <rect x="868" y="16" width="116" height="32" rx="10" fill="#1f2433" stroke="#2b3142"/>
+  <text x="926" y="36" font-size="14" font-weight="700" fill="#eef1f7" text-anchor="middle">Manage</text>
+
+  <!-- status banner (one issue) -->
+  <rect x="0" y="65" width="1000" height="50" fill="#2e2206"/>
+  <line x1="0" y1="115" x2="1000" y2="115" stroke="#8a6310" stroke-width="2"/>
+  <text x="18" y="98" font-size="24" font-weight="800" fill="#f2a516">Check 1</text>
+  <text x="135" y="97" font-size="14" font-weight="700" fill="#f2a516">Wasabi: humidity low</text>
+
+  <!-- ===== cards ===== -->
+  <!-- Telemachus / Ball Python / OK -->
+  <g>
+    <rect x="18" y="130" width="229" height="175" rx="16" fill="#0f2a18" stroke="#1c6b35" stroke-width="2"/>
+    <text x="34" y="159" font-size="18" font-weight="700" fill="#eef1f7">Telemachus</text>
+    <text x="34" y="177" font-size="11" fill="#8b93a7">Ball Python</text>
+    <rect x="193" y="146" width="40" height="22" rx="11" fill="#14271b"/>
+    <text x="213" y="161" font-size="11" font-weight="700" fill="#2fbf5b" text-anchor="middle">OK</text>
+    <line x1="18" y1="194" x2="247" y2="194" stroke="#2b3142"/>
+    <line x1="94" y1="194" x2="94" y2="268" stroke="#2b3142"/>
+    <line x1="171" y1="194" x2="171" y2="268" stroke="#2b3142"/>
+    <text x="56" y="214" font-size="9" font-weight="700" fill="#8b93a7" text-anchor="middle">WARM</text>
+    <text x="56" y="244" font-size="26" font-weight="700" fill="#2fbf5b" text-anchor="middle">87°</text>
+    <text x="132" y="214" font-size="9" font-weight="700" fill="#8b93a7" text-anchor="middle">HUMIDITY</text>
+    <text x="132" y="244" font-size="26" font-weight="700" fill="#2fbf5b" text-anchor="middle">68%</text>
+    <text x="209" y="214" font-size="9" font-weight="700" fill="#8b93a7" text-anchor="middle">COOL</text>
+    <text x="209" y="244" font-size="26" font-weight="700" fill="#2fbf5b" text-anchor="middle">78°</text>
+    <line x1="18" y1="268" x2="247" y2="268" stroke="#2b3142"/>
+    <text x="34" y="290" font-size="11" fill="#8b93a7">2m ago</text>
+  </g>
+  <!-- Dracarys / Bearded Dragon / OK -->
+  <g>
+    <rect x="263" y="130" width="229" height="175" rx="16" fill="#0f2a18" stroke="#1c6b35" stroke-width="2"/>
+    <text x="279" y="159" font-size="18" font-weight="700" fill="#eef1f7">Dracarys</text>
+    <text x="279" y="177" font-size="11" fill="#8b93a7">Bearded Dragon</text>
+    <rect x="438" y="146" width="40" height="22" rx="11" fill="#14271b"/>
+    <text x="458" y="161" font-size="11" font-weight="700" fill="#2fbf5b" text-anchor="middle">OK</text>
+    <line x1="263" y1="194" x2="492" y2="194" stroke="#2b3142"/>
+    <line x1="339" y1="194" x2="339" y2="268" stroke="#2b3142"/>
+    <line x1="416" y1="194" x2="416" y2="268" stroke="#2b3142"/>
+    <text x="301" y="214" font-size="9" font-weight="700" fill="#8b93a7" text-anchor="middle">WARM</text>
+    <text x="301" y="244" font-size="26" font-weight="700" fill="#2fbf5b" text-anchor="middle">102°</text>
+    <text x="377" y="214" font-size="9" font-weight="700" fill="#8b93a7" text-anchor="middle">HUMIDITY</text>
+    <text x="377" y="244" font-size="26" font-weight="700" fill="#2fbf5b" text-anchor="middle">35%</text>
+    <text x="454" y="214" font-size="9" font-weight="700" fill="#8b93a7" text-anchor="middle">COOL</text>
+    <text x="454" y="244" font-size="26" font-weight="700" fill="#2fbf5b" text-anchor="middle">82°</text>
+    <line x1="263" y1="268" x2="492" y2="268" stroke="#2b3142"/>
+    <text x="279" y="290" font-size="11" fill="#8b93a7">1m ago</text>
+  </g>
+  <!-- Pascal / Veiled Chameleon / OK -->
+  <g>
+    <rect x="508" y="130" width="229" height="175" rx="16" fill="#0f2a18" stroke="#1c6b35" stroke-width="2"/>
+    <text x="524" y="159" font-size="18" font-weight="700" fill="#eef1f7">Pascal</text>
+    <text x="524" y="177" font-size="11" fill="#8b93a7">Veiled Chameleon</text>
+    <rect x="683" y="146" width="40" height="22" rx="11" fill="#14271b"/>
+    <text x="703" y="161" font-size="11" font-weight="700" fill="#2fbf5b" text-anchor="middle">OK</text>
+    <line x1="508" y1="194" x2="737" y2="194" stroke="#2b3142"/>
+    <line x1="584" y1="194" x2="584" y2="268" stroke="#2b3142"/>
+    <line x1="661" y1="194" x2="661" y2="268" stroke="#2b3142"/>
+    <text x="546" y="214" font-size="9" font-weight="700" fill="#8b93a7" text-anchor="middle">WARM</text>
+    <text x="546" y="244" font-size="26" font-weight="700" fill="#2fbf5b" text-anchor="middle">86°</text>
+    <text x="622" y="214" font-size="9" font-weight="700" fill="#8b93a7" text-anchor="middle">HUMIDITY</text>
+    <text x="622" y="244" font-size="26" font-weight="700" fill="#2fbf5b" text-anchor="middle">48%</text>
+    <text x="699" y="214" font-size="9" font-weight="700" fill="#8b93a7" text-anchor="middle">COOL</text>
+    <text x="699" y="244" font-size="26" font-weight="700" fill="#2fbf5b" text-anchor="middle">74°</text>
+    <line x1="508" y1="268" x2="737" y2="268" stroke="#2b3142"/>
+    <text x="524" y="290" font-size="11" fill="#8b93a7">just now</text>
+  </g>
+  <!-- Wasabi / Panther Chameleon / CHECK (humidity) -->
+  <g>
+    <rect x="753" y="130" width="229" height="175" rx="16" fill="#2e2206" stroke="#8a6310" stroke-width="2"/>
+    <text x="769" y="159" font-size="18" font-weight="700" fill="#eef1f7">Wasabi</text>
+    <text x="769" y="177" font-size="11" fill="#8b93a7">Panther Chameleon</text>
+    <rect x="912" y="146" width="56" height="22" rx="11" fill="#2a2310"/>
+    <text x="940" y="161" font-size="11" font-weight="700" fill="#f2a516" text-anchor="middle">Check</text>
+    <line x1="753" y1="194" x2="982" y2="194" stroke="#3a3320"/>
+    <line x1="829" y1="194" x2="829" y2="268" stroke="#3a3320"/>
+    <line x1="906" y1="194" x2="906" y2="268" stroke="#3a3320"/>
+    <text x="791" y="214" font-size="9" font-weight="700" fill="#8b93a7" text-anchor="middle">WARM</text>
+    <text x="791" y="244" font-size="26" font-weight="700" fill="#eef1f7" text-anchor="middle">87°</text>
+    <text x="867" y="214" font-size="9" font-weight="700" fill="#8b93a7" text-anchor="middle">HUMIDITY</text>
+    <text x="867" y="244" font-size="26" font-weight="800" fill="#f0463f" text-anchor="middle">38%</text>
+    <text x="944" y="214" font-size="9" font-weight="700" fill="#8b93a7" text-anchor="middle">COOL</text>
+    <text x="944" y="244" font-size="26" font-weight="700" fill="#eef1f7" text-anchor="middle">76°</text>
+    <line x1="753" y1="268" x2="982" y2="268" stroke="#3a3320"/>
+    <text x="769" y="290" font-size="11" fill="#8b93a7">3m ago</text>
+  </g>
+  <!-- Mort / Leopard Gecko / OK -->
+  <g>
+    <rect x="18" y="321" width="229" height="175" rx="16" fill="#0f2a18" stroke="#1c6b35" stroke-width="2"/>
+    <text x="34" y="350" font-size="18" font-weight="700" fill="#eef1f7">Mort</text>
+    <text x="34" y="368" font-size="11" fill="#8b93a7">Leopard Gecko</text>
+    <rect x="193" y="337" width="40" height="22" rx="11" fill="#14271b"/>
+    <text x="213" y="352" font-size="11" font-weight="700" fill="#2fbf5b" text-anchor="middle">OK</text>
+    <line x1="18" y1="385" x2="247" y2="385" stroke="#2b3142"/>
+    <line x1="94" y1="385" x2="94" y2="459" stroke="#2b3142"/>
+    <line x1="171" y1="385" x2="171" y2="459" stroke="#2b3142"/>
+    <text x="56" y="405" font-size="9" font-weight="700" fill="#8b93a7" text-anchor="middle">WARM</text>
+    <text x="56" y="435" font-size="26" font-weight="700" fill="#2fbf5b" text-anchor="middle">91°</text>
+    <text x="132" y="405" font-size="9" font-weight="700" fill="#8b93a7" text-anchor="middle">HUMIDITY</text>
+    <text x="132" y="435" font-size="26" font-weight="700" fill="#2fbf5b" text-anchor="middle">38%</text>
+    <text x="209" y="405" font-size="9" font-weight="700" fill="#8b93a7" text-anchor="middle">COOL</text>
+    <text x="209" y="435" font-size="26" font-weight="700" fill="#2fbf5b" text-anchor="middle">74°</text>
+    <line x1="18" y1="459" x2="247" y2="459" stroke="#2b3142"/>
+    <text x="34" y="481" font-size="11" fill="#8b93a7">2m ago</text>
+  </g>
+  <!-- Taco / Pacman Frog / OK -->
+  <g>
+    <rect x="263" y="321" width="229" height="175" rx="16" fill="#0f2a18" stroke="#1c6b35" stroke-width="2"/>
+    <text x="279" y="350" font-size="18" font-weight="700" fill="#eef1f7">Taco</text>
+    <text x="279" y="368" font-size="11" fill="#8b93a7">Pacman Frog</text>
+    <rect x="438" y="337" width="40" height="22" rx="11" fill="#14271b"/>
+    <text x="458" y="352" font-size="11" font-weight="700" fill="#2fbf5b" text-anchor="middle">OK</text>
+    <line x1="263" y1="385" x2="492" y2="385" stroke="#2b3142"/>
+    <line x1="339" y1="385" x2="339" y2="459" stroke="#2b3142"/>
+    <line x1="416" y1="385" x2="416" y2="459" stroke="#2b3142"/>
+    <text x="301" y="405" font-size="9" font-weight="700" fill="#8b93a7" text-anchor="middle">WARM</text>
+    <text x="301" y="435" font-size="26" font-weight="700" fill="#2fbf5b" text-anchor="middle">79°</text>
+    <text x="377" y="405" font-size="9" font-weight="700" fill="#8b93a7" text-anchor="middle">HUMIDITY</text>
+    <text x="377" y="435" font-size="26" font-weight="700" fill="#2fbf5b" text-anchor="middle">72%</text>
+    <text x="454" y="405" font-size="9" font-weight="700" fill="#8b93a7" text-anchor="middle">COOL</text>
+    <text x="454" y="435" font-size="26" font-weight="700" fill="#2fbf5b" text-anchor="middle">75°</text>
+    <line x1="263" y1="459" x2="492" y2="459" stroke="#2b3142"/>
+    <text x="279" y="481" font-size="11" fill="#8b93a7">1m ago</text>
+  </g>
+  <!-- Echo / Crested Gecko / OK -->
+  <g>
+    <rect x="508" y="321" width="229" height="175" rx="16" fill="#0f2a18" stroke="#1c6b35" stroke-width="2"/>
+    <text x="524" y="350" font-size="18" font-weight="700" fill="#eef1f7">Echo</text>
+    <text x="524" y="368" font-size="11" fill="#8b93a7">Crested Gecko</text>
+    <rect x="683" y="337" width="40" height="22" rx="11" fill="#14271b"/>
+    <text x="703" y="352" font-size="11" font-weight="700" fill="#2fbf5b" text-anchor="middle">OK</text>
+    <line x1="508" y1="385" x2="737" y2="385" stroke="#2b3142"/>
+    <line x1="584" y1="385" x2="584" y2="459" stroke="#2b3142"/>
+    <line x1="661" y1="385" x2="661" y2="459" stroke="#2b3142"/>
+    <text x="546" y="405" font-size="9" font-weight="700" fill="#8b93a7" text-anchor="middle">WARM</text>
+    <text x="546" y="435" font-size="26" font-weight="700" fill="#2fbf5b" text-anchor="middle">77°</text>
+    <text x="622" y="405" font-size="9" font-weight="700" fill="#8b93a7" text-anchor="middle">HUMIDITY</text>
+    <text x="622" y="435" font-size="26" font-weight="700" fill="#2fbf5b" text-anchor="middle">65%</text>
+    <text x="699" y="405" font-size="9" font-weight="700" fill="#8b93a7" text-anchor="middle">COOL</text>
+    <text x="699" y="435" font-size="26" font-weight="700" fill="#2fbf5b" text-anchor="middle">73°</text>
+    <line x1="508" y1="459" x2="737" y2="459" stroke="#2b3142"/>
+    <text x="524" y="481" font-size="11" fill="#8b93a7">just now</text>
+  </g>
+  <!-- Rhino / Western Hognose / OK -->
+  <g>
+    <rect x="753" y="321" width="229" height="175" rx="16" fill="#0f2a18" stroke="#1c6b35" stroke-width="2"/>
+    <text x="769" y="350" font-size="18" font-weight="700" fill="#eef1f7">Rhino</text>
+    <text x="769" y="368" font-size="11" fill="#8b93a7">Western Hognose</text>
+    <rect x="928" y="337" width="40" height="22" rx="11" fill="#14271b"/>
+    <text x="948" y="352" font-size="11" font-weight="700" fill="#2fbf5b" text-anchor="middle">OK</text>
+    <line x1="753" y1="385" x2="982" y2="385" stroke="#2b3142"/>
+    <line x1="829" y1="385" x2="829" y2="459" stroke="#2b3142"/>
+    <line x1="906" y1="385" x2="906" y2="459" stroke="#2b3142"/>
+    <text x="791" y="405" font-size="9" font-weight="700" fill="#8b93a7" text-anchor="middle">WARM</text>
+    <text x="791" y="435" font-size="26" font-weight="700" fill="#2fbf5b" text-anchor="middle">87°</text>
+    <text x="867" y="405" font-size="9" font-weight="700" fill="#8b93a7" text-anchor="middle">HUMIDITY</text>
+    <text x="867" y="435" font-size="26" font-weight="700" fill="#2fbf5b" text-anchor="middle">40%</text>
+    <text x="944" y="405" font-size="9" font-weight="700" fill="#8b93a7" text-anchor="middle">COOL</text>
+    <text x="944" y="435" font-size="26" font-weight="700" fill="#2fbf5b" text-anchor="middle">72°</text>
+    <line x1="753" y1="459" x2="982" y2="459" stroke="#2b3142"/>
+    <text x="769" y="481" font-size="11" fill="#8b93a7">4m ago</text>
+  </g>
+</svg>
