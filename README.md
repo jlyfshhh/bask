@@ -24,6 +24,8 @@ It runs on hardware as small as a **Raspberry Pi Zero W**: the Pi only scans and
 
 ![Bask dashboard with example data](docs/dashboard.svg)
 
+> 🆕 **New to Raspberry Pi?** The **[beginner's setup guide](docs/SETUP.md)** takes you from a box of parts to a working dashboard in about 30 minutes — what to buy, how to flash the card, and one line to install. Nothing assumed.
+
 ## Features
 
 - 📡 **Passive Bluetooth scanning** — no pairing, no cloud, no Govee account. Reads the sensors' broadcast advertisements locally.
@@ -64,32 +66,38 @@ Bask is hardware-agnostic — adapt it to whatever you have:
 
 ## Install
 
-Bask needs Python 3.11+ and three packages: `bleak`, `fastapi`, and `uvicorn`.
+### Easiest — one line (recommended)
+
+New to Raspberry Pi? **Start with the [beginner's setup guide](docs/SETUP.md)** — it covers what to buy and how to flash the SD card before you get here.
+
+Already have a Raspberry Pi on your network with SSH enabled? Just run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jlyfshhh/bask/main/get-bask.sh | bash
+```
+
+This downloads Bask, installs the system and Python dependencies, enables BlueZ passive scanning and mDNS, creates your `config.json`, and installs two `systemd` services that start on boot. When it finishes it prints your dashboard URL — `http://<hostname>.local:8080`. (Set the hostname to `bask` when flashing the card and that becomes **`bask.local`**.) Run the same command again any time to update.
+
+### Manual install
+
+Prefer to set it up yourself, or running on a non-Pi Linux box? Bask needs Python 3.11+ and three packages: `bleak`, `fastapi`, and `uvicorn`.
 
 ```bash
 git clone https://github.com/jlyfshhh/bask.git
 cd bask
 cp config.example.json config.json
-```
-
-Install the Python dependencies. On most systems, pip is easiest:
-
-```bash
 pip install -r requirements.txt
 ```
 
-> **Low-power Pi note:** on the original Raspberry Pi Zero W (ARMv6), some wheels won't build under pip. Install from the system package manager instead:
-> ```bash
-> sudo apt install -y python3-bleak python3-fastapi python3-uvicorn python3-dbus-fast
-> ```
+> **Original Pi Zero W (ARMv6) note:** some wheels won't build under pip there. Either use the recommended **Pi Zero 2 W**, or install the deps from apt instead: `sudo apt install -y python3-bleak python3-fastapi python3-uvicorn python3-dbus-fast`.
 
-**Linux/BlueZ — enable reliable passive scanning** (recommended; lets the scanner see every advertisement instead of de-duplicated ones):
+**Enable reliable passive scanning (Linux/BlueZ)**, and `avahi` so the Pi is reachable by name:
 
 ```bash
 sudo sed -i 's/^#*Experimental = .*/Experimental = true/' /etc/bluetooth/main.conf
 sudo systemctl restart bluetooth
-# add your user to the bluetooth group so the scanner doesn't need root:
-sudo usermod -aG bluetooth "$USER"
+sudo usermod -aG bluetooth "$USER"   # so the scanner doesn't need root
+sudo apt install -y avahi-daemon     # so http://<hostname>.local:8080 works
 ```
 
 **Run it:**
@@ -98,9 +106,11 @@ sudo usermod -aG bluetooth "$USER"
 ./start.sh
 ```
 
-Then open `http://<host-ip>:8080` in any browser, and tap **⚙ Manage → Sensors → Pair by proximity** to add your sensors.
+Then open `http://<hostname>.local:8080` (or `http://<host-ip>:8080`) in any browser, and tap **⚙ Manage → Sensors → Pair by proximity** to add your sensors.
 
 ### Run as a service (recommended)
+
+> The one-line installer above already does this for you. These manual steps are for the manual-install path.
 
 Two `systemd` units keep the scanner and web server running and start them on boot. Adjust the user and paths, then drop these in `/etc/systemd/system/`:
 
@@ -196,8 +206,11 @@ server/
   app.py          FastAPI: JSON API, range evaluation, serves the frontend
 frontend/         vanilla HTML/CSS/JS dashboard (+ favicon, keep-alive)
 config.example.json   copy to config.json
-start.sh          run scanner + web server together
+get-bask.sh       one-line installer — downloads Bask, then runs deploy/install.sh
+deploy/install.sh sets up deps, BlueZ passive scanning, mDNS, and the systemd services
+start.sh          run scanner + web server together (local/dev)
 kiosk.sh          optional fullscreen browser launcher for a host-attached screen
+docs/SETUP.md     complete beginner's guide (hardware → flashing → install)
 ```
 
 ## 🦗 Buy the animals some crickets

@@ -1,0 +1,84 @@
+<svg viewBox="0 0 940 210" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
+  <defs>
+    <style>
+      .card { fill: #1c2230; stroke: #2c3445; stroke-width: 1.5; rx: 14; }
+      .num  { fill: #F2A516; font-weight: 800; font-size: 15px; }
+      .ttl  { fill: #f3f5f8; font-weight: 700; font-size: 17px; }
+      .sub  { fill: #9aa4b2; font-size: 12.5px; }
+      .ico  { stroke: #F2A516; stroke-width: 2.2; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+      .icf  { fill: #F2A516; }
+    </style>
+  </defs>
+
+  <!-- Step 1: Flash -->
+  <g transform="translate(10,30)">
+    <rect class="card" width="200" height="150" rx="14"/>
+    <circle cx="42" cy="46" r="22" fill="#F2A516" opacity="0.12"/>
+    <!-- SD card icon -->
+    <path class="ico" d="M30 36 h18 l8 8 v22 a3 3 0 0 1 -3 3 h-23 a3 3 0 0 1 -3 -3 v-24 a6 6 0 0 1 6 -6 z"/>
+    <line class="ico" x1="36" y1="36" x2="36" y2="44"/>
+    <line class="ico" x1="42" y1="36" x2="42" y2="44"/>
+    <line class="ico" x1="48" y1="38" x2="48" y2="44"/>
+    <text class="num" x="78" y="42">1</text>
+    <text class="ttl" x="20" y="98">Flash the card</text>
+    <text class="sub" x="20" y="120">Raspberry Pi Imager —</text>
+    <text class="sub" x="20" y="137">set hostname, Wi-Fi, SSH</text>
+  </g>
+
+  <!-- Step 2: Boot -->
+  <g transform="translate(250,30)">
+    <rect class="card" width="200" height="150" rx="14"/>
+    <circle cx="42" cy="46" r="22" fill="#F2A516" opacity="0.12"/>
+    <!-- Pi / chip icon -->
+    <rect class="ico" x="28" y="32" width="28" height="28" rx="3"/>
+    <line class="ico" x1="24" y1="40" x2="28" y2="40"/>
+    <line class="ico" x1="24" y1="52" x2="28" y2="52"/>
+    <line class="ico" x1="56" y1="40" x2="60" y2="40"/>
+    <line class="ico" x1="56" y1="52" x2="60" y2="52"/>
+    <circle class="icf" cx="42" cy="46" r="4"/>
+    <text class="num" x="78" y="42">2</text>
+    <text class="ttl" x="20" y="98">Plug it in</text>
+    <text class="sub" x="20" y="120">First boot ~2 min;</text>
+    <text class="sub" x="20" y="137">it joins your Wi-Fi</text>
+  </g>
+
+  <!-- Step 3: Install -->
+  <g transform="translate(490,30)">
+    <rect class="card" width="200" height="150" rx="14"/>
+    <circle cx="42" cy="46" r="22" fill="#F2A516" opacity="0.12"/>
+    <!-- Terminal icon -->
+    <rect class="ico" x="26" y="32" width="32" height="26" rx="3"/>
+    <polyline class="ico" points="32,42 38,46 32,50"/>
+    <line class="ico" x1="42" y1="51" x2="52" y2="51"/>
+    <text class="num" x="78" y="42">3</text>
+    <text class="ttl" x="20" y="98">Run one line</text>
+    <text class="sub" x="20" y="120">curl …/get-bask.sh</text>
+    <text class="sub" x="20" y="137">installs everything</text>
+  </g>
+
+  <!-- Step 4: Open -->
+  <g transform="translate(730,30)">
+    <rect class="card" width="200" height="150" rx="14"/>
+    <circle cx="42" cy="46" r="22" fill="#F2A516" opacity="0.12"/>
+    <!-- Browser / sun icon -->
+    <circle class="ico" cx="42" cy="46" r="15"/>
+    <path class="icf" d="M42 56 a10 10 0 0 1 0 -20 z" opacity="0.0"/>
+    <g stroke="#F2A516" stroke-width="2.2" stroke-linecap="round">
+      <line x1="42" y1="26" x2="42" y2="30"/>
+      <line x1="42" y1="62" x2="42" y2="66"/>
+      <line x1="22" y1="46" x2="26" y2="46"/>
+      <line x1="58" y1="46" x2="62" y2="46"/>
+    </g>
+    <text class="num" x="78" y="42">4</text>
+    <text class="ttl" x="20" y="98">Open the app</text>
+    <text class="sub" x="20" y="120">http://bask.local</text>
+    <text class="sub" x="20" y="137">:8080 — that's it</text>
+  </g>
+
+  <!-- arrows -->
+  <g fill="#F2A516">
+    <path d="M218 105 l14 0 l-4 -5 l10 5 l-10 5 l4 -5 z"/>
+    <path d="M458 105 l14 0 l-4 -5 l10 5 l-10 5 l4 -5 z"/>
+    <path d="M698 105 l14 0 l-4 -5 l10 5 l-10 5 l4 -5 z"/>
+  </g>
+</svg>

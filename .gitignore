@@ -16,6 +16,3 @@ config.json
 .DS_Store
 .claude/
 _reference/
-
-# Superseded by the README's install instructions (assumed pip/venv; breaks on armv6)
-deploy/
