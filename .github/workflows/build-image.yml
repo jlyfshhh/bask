@@ -31,6 +31,9 @@ jobs:
       - name: Pin that ref into the install stage
         run: sed -i "s|@BASK_REF@|${{ steps.ref.outputs.ref }}|" image/stage-bask/01-run-chroot.sh
 
+      - name: Set up QEMU (arm64 emulation for the cross-build)
+        uses: docker/setup-qemu-action@v3
+
       - name: Build the image
         id: build
         uses: usimd/pi-gen-action@v1
