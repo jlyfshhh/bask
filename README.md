@@ -18,7 +18,7 @@
 
 Bask is a small, self-hosted dashboard for reptile/amphibian keepers (or anyone with [Govee H5075](https://a.co/d/0f8luxOE) sensors). It listens to your sensors over Bluetooth, checks each enclosure against **per-species day/night ranges**, and shows a big green "all good" — or a red alert that names exactly what's wrong.
 
-It runs on hardware as small as a **Raspberry Pi Zero W**: the Pi only scans and serves; any browser displays it. No cloud, no account, no internet required.
+It runs on an inexpensive **Raspberry Pi** — a Pi 4, Pi 3B+, or Zero 2 W all work great: the Pi only scans and serves; any phone, tablet, or browser displays it. No cloud, no account, no internet required.
 
 > **The idea:** walk into your animal room and know instantly — *green or not green* — whether everything's okay. Details are a tap away; status is readable from the doorway.
 
@@ -60,7 +60,7 @@ Two processes share one SQLite file so they never contend for the Bluetooth radi
 
 Bask is hardware-agnostic — adapt it to whatever you have:
 
-- **A host with Bluetooth Low Energy** running Linux. A Raspberry Pi (Zero W, Zero 2 W, 3/4/5) is the obvious choice, but any Linux machine with a BLE adapter works. (macOS works for development too.)
+- **Any current Raspberry Pi.** A **Pi 4** or **Pi 3B+** is the easy, widely-available pick; a **Pi Zero 2 W** is the most compact and lowest-power; a **Pi 5** works too. They all have built-in Wi‑Fi and Bluetooth and run the same image. *(64-bit models only — the original ARMv6 Pi Zero W / Pi 1 are too slow and not recommended.)* Any other Linux machine with a BLE adapter also works, and macOS works for development.
 - **One or more Govee H5075** sensors (other Govee BLE thermo-hygrometers that broadcast readings may also work).
 - **A display** — an old tablet or phone, a monitor on the host, a smart display, or just any browser on your network.
 
@@ -89,7 +89,7 @@ cp config.example.json config.json
 pip install -r requirements.txt
 ```
 
-> **Original Pi Zero W (ARMv6) note:** some wheels won't build under pip there. Either use the recommended **Pi Zero 2 W**, or install the deps from apt instead: `sudo apt install -y python3-bleak python3-fastapi python3-uvicorn python3-dbus-fast`.
+> **Original Pi Zero W (ARMv6) note:** some wheels won't build under pip there. Use a 64-bit Pi (Pi 4 / 3B+ / Zero 2 W / 5), or install the deps from apt instead: `sudo apt install -y python3-bleak python3-fastapi python3-uvicorn python3-dbus-fast`.
 
 **Enable reliable passive scanning (Linux/BlueZ)**, and `avahi` so the Pi is reachable by name:
 

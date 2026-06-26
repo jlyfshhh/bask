@@ -14,14 +14,14 @@ You need a small always-on computer (a Raspberry Pi) and an SD card for it. Here
 
 | Item | What it's for | Notes |
 |---|---|---|
-| **Raspberry Pi Zero 2 W** | The little computer that runs Bask | ~$15. Has built-in Wi‑Fi **and** Bluetooth. A Pi 3, 4, or 5 also works great if you have one. |
+| **A Raspberry Pi** | The little computer that runs Bask | Any current model: a **Pi 4** or **Pi 3B+** is the easiest to buy; a **Zero 2 W** is the tiniest. All have built-in Wi‑Fi **and** Bluetooth. *(Avoid the old single-core **Pi Zero W** / Pi 1 — too slow.)* |
 | **microSD card, 16 GB+** | Its hard drive | Any decent brand (SanDisk, Samsung). "Class 10 / A1" is plenty. |
-| **USB power supply** | Power | The Zero 2 W uses a **micro‑USB** plug, 5V / 2.5A. A clean phone charger works. |
+| **A USB power supply** | Power | Whatever matches your Pi: **Pi 4** uses **USB‑C**; **Pi 3 / Zero 2 W** use **micro‑USB**. A good phone charger (5V, 2.5A+) works. |
 | **A computer** | To set up the SD card once | Windows, Mac, or Linux — anything. You only need it for setup. |
 | **Your Govee H5075 sensors** | The thermometers Bask reads | One or more. Fresh batteries help. |
 | *(optional)* A small case | Keeps the Pi tidy | Nice to have, not required. |
 
-> 💡 The **Pi Zero 2 W** is the recommended board — it's cheap, sips power, and installs everything the easy way. Avoid the *original* Pi Zero W (the older single‑core one); it works but is much slower and fussier.
+> 💡 **Which Pi should I get?** If you're buying one, a **Pi 4 (2GB)** or **Pi 3B+** is the most foolproof and the easiest to find in stock. The **Zero 2 W** is great if you want the smallest, lowest-power option (but it's often out of stock — [rpilocator.com](https://rpilocator.com) tracks who has Pis available). They all run the exact same Bask setup, so just grab whichever you can get.
 
 ---
 
@@ -32,7 +32,7 @@ You need a small always-on computer (a Raspberry Pi) and an SD card for it. Here
 1. On your computer, download **Raspberry Pi Imager** from **[raspberrypi.com/software](https://www.raspberrypi.com/software/)** and install it.
 2. Put your microSD card into your computer (use a USB adapter if needed).
 3. Open Raspberry Pi Imager and set the three buttons:
-   - **Choose Device** → *Raspberry Pi Zero 2 W* (or whichever Pi you have).
+   - **Choose Device** → the Pi model you have (e.g. *Raspberry Pi 4* or *Raspberry Pi Zero 2 W*).
    - **Choose OS** → *Raspberry Pi OS (other)* → **Raspberry Pi OS Lite (64‑bit)**. ("Lite" has no desktop — exactly what we want for an appliance.)
    - **Choose Storage** → your SD card. **Double‑check you picked the card and not your hard drive.**
 4. Click **Next**. When it asks *"Would you like to apply OS customisation settings?"*, click **Edit Settings**. This step is what makes everything else painless — fill it in carefully:
@@ -50,7 +50,7 @@ You need a small always-on computer (a Raspberry Pi) and an SD card for it. Here
 ## 3. First boot
 
 1. Put the SD card into the Pi.
-2. Plug the **power** into the Pi's power port (on the Zero 2 W it's the micro‑USB labelled `PWR`).
+2. Plug the **power** into the Pi's power port (labelled `PWR` — USB‑C on a Pi 4, micro‑USB on a Pi 3 or Zero 2 W).
 3. Wait about **2 minutes** for its first start‑up. There's no screen — that's normal. It's quietly joining your Wi‑Fi.
 
 ---
