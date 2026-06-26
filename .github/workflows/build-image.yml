@@ -14,7 +14,9 @@ permissions:
 
 jobs:
   build-image:
-    runs-on: ubuntu-latest
+    # Native arm64 runner builds the arm64 image directly — no QEMU/binfmt
+    # emulation needed (and it's free for public repositories).
+    runs-on: ubuntu-24.04-arm
     steps:
       - name: Check out
         uses: actions/checkout@v4
@@ -30,9 +32,6 @@ jobs:
 
       - name: Pin that ref into the install stage
         run: sed -i "s|@BASK_REF@|${{ steps.ref.outputs.ref }}|" image/stage-bask/01-run-chroot.sh
-
-      - name: Set up QEMU (arm64 emulation for the cross-build)
-        uses: docker/setup-qemu-action@v3
 
       - name: Build the image
         id: build
