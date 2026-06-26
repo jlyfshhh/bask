@@ -45,7 +45,6 @@ jobs:
           stage-list: stage0 stage1 stage2 ./image/stage-bask
           release: trixie
           compression: xz
-          increase-runner-disk-size: true
           verbose-output: true
 
       - name: Upload image as a workflow artifact
