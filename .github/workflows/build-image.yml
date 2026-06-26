@@ -67,8 +67,22 @@ jobs:
           path: ${{ steps.build.outputs.image-path }}
           if-no-files-found: error
 
-      - name: Attach image to the Release (tag builds only)
+      - name: Publish the image to a GitHub Release (tag builds only)
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ steps.build.outputs.image-path }}
+          # Tags with a hyphen (e.g. v1.0.0-rc1) are marked as pre-releases.
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true
+          body: |
+            **Ready-to-flash Bask image for Raspberry Pi.** Write it to an SD card with
+            [Raspberry Pi Imager](https://www.raspberrypi.com/software/), set your Wi-Fi in
+            the app, power on, and open **http://bask.local:8080**.
+            Full visual walkthrough → https://jlyfshhh.github.io/bask/
+
+            Works on any 64-bit Raspberry Pi (Pi 3 / 3B+, 4, 400, 5, Zero 2 W).
+
+            > **Security:** the image ships with **no known login** (a random, discarded
+            > password). You never need to log in — just use the dashboard. To enable SSH,
+            > set your own username and password in Raspberry Pi Imager when you flash.
