@@ -34,32 +34,3 @@ self.addEventListener("fetch", (e) => {
       .catch(() => caches.match(e.request).then((r) => r || caches.match("/")))
   );
 });
-
-// A push from the Pi → a phone notification.
-self.addEventListener("push", (e) => {
-  let d = {};
-  try { d = e.data.json(); } catch (_) {}
-  e.waitUntil(
-    self.registration.showNotification(d.title || "Bask", {
-      body: d.body || "",
-      tag: d.tag,
-      renotify: true,
-      icon: "/icon-192.png",
-      badge: "/icon-192.png",
-      data: { url: d.url || "/" },
-    })
-  );
-});
-
-self.addEventListener("notificationclick", (e) => {
-  e.notification.close();
-  const target = (e.notification.data && e.notification.data.url) || "/";
-  e.waitUntil(
-    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((wins) => {
-      for (const w of wins) {
-        if ("focus" in w) return w.focus();
-      }
-      if (self.clients.openWindow) return self.clients.openWindow(target);
-    })
-  );
-});

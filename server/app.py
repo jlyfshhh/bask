@@ -6,10 +6,10 @@ against per-species ranges, and serve the touch UI. Discovery ("add a sensor")
 reads the scanner's `discovered` table instead of starting its own scan.
 """
 import asyncio
-import base64
 import datetime
 import json
 import logging
+import secrets
 import sys
 import time
 import urllib.request
@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -43,8 +43,10 @@ def load_config() -> dict:
     cfg["settings"].setdefault("day_start_hour", 8)   # heat on  → day ranges
     cfg["settings"].setdefault("day_end_hour", 20)    # heat off → night ranges
     cfg.setdefault("thermostats", [])                 # optional Herpstat SpyderWeb units
-    cfg.setdefault("push", {})                         # opt-in web-push alerts (keys + subs)
-    cfg["push"].setdefault("subscriptions", [])
+    cfg.setdefault("ntfy", {})                         # opt-in phone alerts via ntfy
+    cfg["ntfy"].setdefault("server", "https://ntfy.sh")
+    cfg["ntfy"].setdefault("topic", "")
+    cfg["ntfy"].setdefault("enabled", False)
     return cfg
 
 
@@ -675,67 +677,43 @@ def delete_thermostat(ip: str):
     return {"ok": True}
 
 
-# ── Web push (optional, opt-in phone alerts) ─────────────────────────────────
-# The Pi sends a notification straight through the browser vendors' push
-# services (VAPID/Web Push) when an enclosure changes into a problem state.
-# Fully opt-in: nothing is sent unless a user taps "Enable alerts". Degrades to
-# a no-op if pywebpush isn't installed, so the dashboard works everywhere.
+# ── Phone alerts via ntfy (optional, opt-in) ────────────────────────────────
+# The Pi POSTs a notification to an ntfy server (ntfy.sh by default) on its own
+# random, unguessable topic; the user subscribes to that topic in the free ntfy
+# app. This works over a plain-HTTP LAN because the Pi only makes an OUTBOUND
+# request — nothing about the Pi is exposed. Fully opt-in.
 
 try:
-    from pywebpush import webpush, WebPushException
-    from py_vapid import Vapid
-    _PUSH_OK = True
+    import segno  # optional: renders the subscribe QR code
+    _QR_OK = True
 except Exception:  # pragma: no cover - optional dependency
-    _PUSH_OK = False
-
-VAPID_SUBJECT = "mailto:bask@bask.local"
-_vapid_cache: dict[str, object] = {}
+    _QR_OK = False
 
 
-def _ensure_vapid(cfg) -> dict:
-    """Generate + persist a VAPID keypair on first use; return the push config."""
-    push = cfg.setdefault("push", {})
-    if not push.get("vapid_private_pem"):
-        from cryptography.hazmat.primitives.asymmetric import ec
-        from cryptography.hazmat.primitives import serialization
-        key = ec.generate_private_key(ec.SECP256R1())
-        push["vapid_private_pem"] = key.private_bytes(
-            serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
-            serialization.NoEncryption()).decode()
-        pub = key.public_key().public_bytes(
-            serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
-        push["vapid_public_key"] = base64.urlsafe_b64encode(pub).rstrip(b"=").decode()
+def _ntfy_topic(cfg) -> str:
+    """Return the persisted random topic, creating one on first use."""
+    nt = cfg["ntfy"]
+    if not nt.get("topic"):
+        nt["topic"] = "bask-" + secrets.token_hex(8)
         save_config(cfg)
-    return push
+    return nt["topic"]
 
 
-def _push_send_all(cfg, payload: dict) -> None:
-    """Send one payload to every subscription; prune ones the browser has dropped."""
-    push = cfg.get("push", {})
-    subs = push.get("subscriptions", [])
-    pem = push.get("vapid_private_pem")
-    if not (_PUSH_OK and subs and pem):
-        return
-    vapid = _vapid_cache.get(pem)
-    if vapid is None:
-        vapid = _vapid_cache[pem] = Vapid.from_pem(pem.encode())
-    dead = []
-    for sub in subs:
-        try:
-            webpush(subscription_info=sub, data=json.dumps(payload),
-                    vapid_private_key=vapid, vapid_claims={"sub": VAPID_SUBJECT}, ttl=120)
-        except WebPushException as e:
-            if getattr(e.response, "status_code", None) in (404, 410):
-                dead.append(sub.get("endpoint"))
-            else:
-                log.warning(f"push failed: {e}")
-        except Exception as e:
-            log.warning(f"push error: {e}")
-    if dead:  # drop expired subscriptions
-        fresh = load_config()
-        fresh["push"]["subscriptions"] = [
-            s for s in fresh["push"]["subscriptions"] if s.get("endpoint") not in dead]
-        save_config(fresh)
+def _subscribe_url(cfg) -> str:
+    server = cfg["ntfy"].get("server", "https://ntfy.sh").rstrip("/")
+    return f"{server}/{_ntfy_topic(cfg)}"
+
+
+def _ntfy_publish(cfg, title: str, body: str, tags: str = "", priority: str = "") -> None:
+    headers = {"Title": title}          # ASCII only — emoji is sent via Tags
+    if tags:
+        headers["Tags"] = tags
+    if priority:
+        headers["Priority"] = priority
+    req = urllib.request.Request(_subscribe_url(cfg), data=body.encode("utf-8"),
+                                 headers=headers, method="POST")
+    with urllib.request.urlopen(req, timeout=8) as r:
+        r.read()
 
 
 # ── Alert loop: notify on transitions into (and back out of) a problem state ──
@@ -745,19 +723,17 @@ _last_status: dict[str, str] = {}
 _notify_seeded = False
 
 
-def _alert_payload(e: dict) -> dict:
+def _alert_text(e: dict) -> str:
     if e["status"] == "stale":
-        body = f"{e['name']}: no sensor signal"
-    else:
-        issues = []
-        if e.get("warm_temp_ok") is False:
-            issues.append("warm temp")
-        if e.get("cool_temp_ok") is False:
-            issues.append("cool temp")
-        if e.get("humidity_ok") is False:
-            issues.append("humidity")
-        body = f"{e['name']}: " + (" + ".join(issues) or "out of range")
-    return {"title": "⚠️ Bask alert", "body": body, "tag": e["id"], "url": "/"}
+        return f"{e['name']}: no sensor signal"
+    issues = []
+    if e.get("warm_temp_ok") is False:
+        issues.append("warm temp")
+    if e.get("cool_temp_ok") is False:
+        issues.append("cool temp")
+    if e.get("humidity_ok") is False:
+        issues.append("humidity")
+    return f"{e['name']}: " + (" + ".join(issues) or "out of range")
 
 
 async def _notify_loop():
@@ -769,67 +745,67 @@ async def _notify_loop():
     global _notify_seeded
     while True:
         try:
-            if _PUSH_OK:
-                cfg = load_config()
-                if cfg["push"].get("subscriptions"):
-                    for e in _build_dashboard(cfg)["enclosures"]:
-                        prev, cur = _last_status.get(e["id"]), e["status"]
-                        _last_status[e["id"]] = cur
-                        if not _notify_seeded or cur == prev:
-                            continue
-                        if cur in BAD_STATES:
-                            await asyncio.to_thread(_push_send_all, cfg, _alert_payload(e))
-                        elif cur == "ok" and prev in BAD_STATES:
-                            await asyncio.to_thread(_push_send_all, cfg,
-                                {"title": "Bask", "body": f"✓ {e['name']} is back to normal",
-                                 "tag": e["id"], "url": "/"})
-                    _notify_seeded = True
+            cfg = load_config()
+            if cfg["ntfy"].get("enabled") and cfg["ntfy"].get("topic"):
+                for e in _build_dashboard(cfg)["enclosures"]:
+                    prev, cur = _last_status.get(e["id"]), e["status"]
+                    _last_status[e["id"]] = cur
+                    if not _notify_seeded or cur == prev:
+                        continue
+                    if cur in BAD_STATES:
+                        await asyncio.to_thread(_ntfy_publish, cfg, "Bask alert",
+                                                _alert_text(e), "warning", "high")
+                    elif cur == "ok" and prev in BAD_STATES:
+                        await asyncio.to_thread(_ntfy_publish, cfg, "Bask",
+                                                f"{e['name']} is back to normal", "white_check_mark")
+                _notify_seeded = True
         except Exception as e:
             log.warning(f"notify loop error: {e}")
         await asyncio.sleep(NOTIFY_POLL)
 
 
-class PushSubscription(BaseModel):
-    endpoint: str = Field(min_length=1, max_length=2048)
-    keys: dict = Field(default_factory=dict)
+class NtfyToggle(BaseModel):
+    enabled: bool
 
 
-@app.get("/api/push/pubkey")
-def push_pubkey():
-    """The VAPID public key the browser needs to subscribe (or enabled=false)."""
-    if not _PUSH_OK:
-        return {"enabled": False}
+@app.get("/api/ntfy")
+def ntfy_status():
     cfg = load_config()
-    return {"enabled": True, "public_key": _ensure_vapid(cfg)["vapid_public_key"]}
+    return {"topic": _ntfy_topic(cfg), "server": cfg["ntfy"]["server"],
+            "enabled": cfg["ntfy"]["enabled"], "subscribe_url": _subscribe_url(cfg),
+            "qr": _QR_OK}
 
 
-@app.post("/api/push/subscribe")
-def push_subscribe(sub: PushSubscription):
+@app.post("/api/ntfy")
+def ntfy_set(payload: NtfyToggle):
     cfg = load_config()
-    subs = cfg["push"]["subscriptions"]
-    if not any(s.get("endpoint") == sub.endpoint for s in subs):
-        subs.append(sub.model_dump())
-        save_config(cfg)
-    return {"ok": True}
-
-
-@app.post("/api/push/unsubscribe")
-def push_unsubscribe(sub: PushSubscription):
-    cfg = load_config()
-    cfg["push"]["subscriptions"] = [
-        s for s in cfg["push"]["subscriptions"] if s.get("endpoint") != sub.endpoint]
+    cfg["ntfy"]["enabled"] = payload.enabled
+    _ntfy_topic(cfg)
     save_config(cfg)
+    return {"ok": True, "enabled": payload.enabled}
+
+
+@app.post("/api/ntfy/test")
+def ntfy_test():
+    cfg = load_config()
+    try:
+        _ntfy_publish(cfg, "Bask",
+                      "Alerts are working — I'll ping you if an enclosure needs attention.", "lizard")
+    except Exception as e:
+        raise HTTPException(502, f"Could not reach the ntfy server ({e})")
     return {"ok": True}
 
 
-@app.post("/api/push/test")
-def push_test():
+@app.get("/api/ntfy/qr")
+def ntfy_qr():
+    if not _QR_OK:
+        raise HTTPException(404, "QR rendering not available")
+    import io
     cfg = load_config()
-    if not (_PUSH_OK and cfg["push"].get("subscriptions")):
-        raise HTTPException(400, "No alert subscriptions on this server")
-    _push_send_all(cfg, {"title": "Bask", "url": "/",
-        "body": "\U0001f98e Alerts are on — I'll ping you if an enclosure needs attention."})
-    return {"ok": True, "sent": len(cfg["push"]["subscriptions"])}
+    buf = io.BytesIO()
+    segno.make(_subscribe_url(cfg), error="m").save(
+        buf, kind="svg", scale=4, border=2, dark="#0d0f15", light="#ffffff")
+    return Response(content=buf.getvalue(), media_type="image/svg+xml")
 
 
 # Static frontend is mounted last so it doesn't shadow the API routes.

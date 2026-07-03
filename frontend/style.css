@@ -119,6 +119,15 @@ body {
 .test-result.ok { color: var(--ok); }
 .test-result.bad { color: var(--danger); }
 
+/* ntfy phone-alert setup */
+.ntfy-steps { margin: 0 0 12px; padding-left: 20px; font-size: 0.92rem; color: var(--text); }
+.ntfy-steps li { margin: 5px 0; }
+.ntfy-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.ntfy-qr { border-radius: 10px; background: #fff; padding: 6px; flex-shrink: 0; display: block; }
+.ntfy-topic-label { font-size: 0.75rem; color: var(--muted); margin-bottom: 6px; }
+.ntfy-topic code { display: inline-block; font-size: 0.95rem; background: var(--surface2);
+  border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; margin-right: 8px; word-break: break-all; }
+
 /* ── At-a-glance room status banner (readable across the room) ── */
 .status-banner {
   flex-shrink: 0;

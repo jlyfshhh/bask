@@ -901,59 +901,54 @@ function renderSettingsPane() {
   refreshAlertsUI();
 }
 
-// ── Opt-in phone alerts (web push) ───────────────────────────
-function urlB64ToUint8Array(b64) {
-  const pad = "=".repeat((4 - (b64.length % 4)) % 4);
-  const s = (b64 + pad).replace(/-/g, "+").replace(/_/g, "/");
-  const raw = atob(s), arr = new Uint8Array(raw.length);
-  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
-  return arr;
-}
+// ── Opt-in phone alerts (via the ntfy app) ───────────────────
+let _ntfy = null;
 async function refreshAlertsUI() {
   const el = document.getElementById("alerts-setting");
   if (!el) return;
-  const supported = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
-  if (!supported) {
-    el.innerHTML = `<div class="muted-note" style="padding:0;text-align:left">Not supported in this browser. On iPhone, add Bask to your Home Screen first, then open it from there.</div>`;
+  try { _ntfy = await api("GET", "/api/ntfy"); } catch (e) { el.innerHTML = ""; return; }
+  if (!_ntfy.enabled) {
+    el.innerHTML = `<button class="btn primary" onclick="enableAlerts()">Set up phone alerts</button>
+      <div class="muted-note" style="padding:6px 0 0;text-align:left">Free, ~1 minute. Uses the ntfy notification app.</div>`;
     return;
   }
-  let on = false;
-  try { const reg = await navigator.serviceWorker.ready; on = !!(await reg.pushManager.getSubscription()); } catch (e) {}
-  el.innerHTML = on
-    ? `<div class="toggle-row"><button class="btn on" onclick="testAlert()">Send test</button>
-         <button class="btn" onclick="disableAlerts()">Turn off</button></div>
-       <div class="muted-note" style="padding:6px 0 0;text-align:left">✓ Alerts on for this device.</div>`
-    : `<button class="btn primary" onclick="enableAlerts()">Enable phone alerts</button>
-       <div class="muted-note" style="padding:6px 0 0;text-align:left">One tap. No app, no account — turn off anytime.</div>`;
+  const qr = _ntfy.qr
+    ? `<img class="ntfy-qr" src="/api/ntfy/qr?t=${Date.now()}" alt="Subscribe QR code" width="150" height="150">` : "";
+  el.innerHTML = `
+    <div class="ntfy-setup">
+      <ol class="ntfy-steps">
+        <li>Install the free <b>ntfy</b> app (App&nbsp;Store or Google&nbsp;Play).</li>
+        <li>Open it, tap <b>+</b> to add a subscription, then scan this code — or type the topic:</li>
+      </ol>
+      <div class="ntfy-row">
+        ${qr}
+        <div class="ntfy-topic">
+          <div class="ntfy-topic-label">Your private topic</div>
+          <code>${esc(_ntfy.topic)}</code>
+          <button class="btn ghost sm" onclick="copyTopic()">Copy</button>
+        </div>
+      </div>
+      <div class="toggle-row" style="margin-top:14px">
+        <button class="btn on" onclick="testAlert()">Send test</button>
+        <button class="btn" onclick="disableAlerts()">Turn off</button>
+      </div>
+      <div class="muted-note" style="padding:8px 0 0;text-align:left">Once subscribed, tap <b>Send test</b> — it should pop up on your phone.</div>
+    </div>`;
 }
 async function enableAlerts() {
-  try {
-    const info = await api("GET", "/api/push/pubkey");
-    if (!info.enabled) { showToast("Alerts aren't available on this server"); return; }
-    const perm = await Notification.requestPermission();
-    if (perm !== "granted") { showToast("Notifications were blocked in your browser"); return; }
-    const reg = await navigator.serviceWorker.ready;
-    const sub = await reg.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: urlB64ToUint8Array(info.public_key),
-    });
-    await api("POST", "/api/push/subscribe", sub.toJSON());
-    showToast("✓ Phone alerts enabled");
-    refreshAlertsUI();
-  } catch (e) { showToast("Couldn't enable alerts — try again"); }
+  try { await api("POST", "/api/ntfy", { enabled: true }); refreshAlertsUI(); }
+  catch (e) { showToast("Couldn't turn on alerts"); }
 }
 async function disableAlerts() {
-  try {
-    const reg = await navigator.serviceWorker.ready;
-    const sub = await reg.pushManager.getSubscription();
-    if (sub) { await api("POST", "/api/push/unsubscribe", sub.toJSON()); await sub.unsubscribe(); }
-  } catch (e) {}
-  showToast("Alerts turned off");
-  refreshAlertsUI();
+  try { await api("POST", "/api/ntfy", { enabled: false }); } catch (e) {}
+  showToast("Alerts turned off"); refreshAlertsUI();
 }
 async function testAlert() {
-  try { await api("POST", "/api/push/test"); showToast("Test sent — check your phone"); }
-  catch (e) { showToast("Enable alerts first"); }
+  try { await api("POST", "/api/ntfy/test"); showToast("Test sent — check your phone"); }
+  catch (e) { showToast("Couldn't reach ntfy — check the Pi's internet"); }
+}
+function copyTopic() {
+  navigator.clipboard?.writeText(_ntfy?.topic || "").then(() => showToast("Topic copied"), () => {});
 }
 function stepperPlain(key, val, step, unit) {
   return `<div class="stepper" id="set-${key}" data-val="${val}" data-step="${step}" data-unit="${unit}">

@@ -1,4 +1,4 @@
 bleak>=0.21.0
 fastapi>=0.110.0
 uvicorn[standard]>=0.29.0
-pywebpush>=1.14.0   # opt-in web-push phone alerts
+segno>=1.6.0        # renders the QR code for opt-in ntfy phone alerts
