@@ -1,0 +1,130 @@
+<svg viewBox="0 0 1080 1350" xmlns="http://www.w3.org/2000/svg"
+     font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <rect width="1080" height="1350" fill="#FFFDF8"/>
+  <rect width="1080" height="392" fill="#FDF4E3"/>
+
+  <!-- logo lockup -->
+  <g transform="translate(344,56) scale(1.8)">
+    <g stroke="#F2A516" stroke-width="5" stroke-linecap="round">
+      <line x1="38" y1="26" x2="38" y2="16"/>
+      <line x1="38" y1="26" x2="38" y2="16" transform="rotate(33 38 56)"/>
+      <line x1="38" y1="26" x2="38" y2="16" transform="rotate(-33 38 56)"/>
+      <line x1="38" y1="26" x2="38" y2="16" transform="rotate(66 38 56)"/>
+      <line x1="38" y1="26" x2="38" y2="16" transform="rotate(-66 38 56)"/>
+    </g>
+    <path d="M14 56 A24 24 0 0 1 62 56 Z" fill="#F2A516"/>
+    <path d="M28 56 A10 10 0 0 1 48 56 Z" fill="#FFF3D6"/>
+    <text x="78" y="54" font-size="46" font-weight="700" fill="#E0701A">bask</text>
+  </g>
+
+  <text x="540" y="242" text-anchor="middle" font-size="86" font-weight="800" fill="#22262e">Version 1.0 <tspan fill="#E0701A">is here.</tspan></text>
+  <text x="540" y="306" text-anchor="middle" font-size="30" fill="#5c6675">The free dashboard for your animal room — now truly plug &amp; play.</text>
+
+  <!-- ══ iPad (landscape) ══ -->
+  <rect x="60" y="440" width="710" height="490" rx="34" fill="#1c1f26"/>
+  <rect x="84" y="464" width="662" height="442" rx="12" fill="#10151d"/>
+  <!-- ipad screen: top bar -->
+  <g stroke="#F2A516" stroke-width="2.2" stroke-linecap="round" transform="translate(108,486)">
+    <line x1="12" y1="8" x2="12" y2="3"/>
+    <line x1="12" y1="8" x2="12" y2="3" transform="rotate(40 12 19)"/>
+    <line x1="12" y1="8" x2="12" y2="3" transform="rotate(-40 12 19)"/>
+  </g>
+  <path d="M112 505 A11 11 0 0 1 134 505 Z" fill="#F2A516"/>
+  <text x="142" y="509" font-size="24" font-weight="800" fill="#E0701A">bask</text>
+  <text x="722" y="509" text-anchor="end" font-size="17" fill="#7ee3a6">● 5 ok</text>
+
+  <!-- all-good banner -->
+  <rect x="108" y="528" width="614" height="52" rx="10" fill="#173321"/>
+  <text x="415" y="562" text-anchor="middle" font-size="26" font-weight="800" fill="#5fd089">✓  ALL GOOD — 5 enclosures in range</text>
+
+  <!-- tiles row 1 -->
+  <g>
+    <rect x="108" y="600" width="196" height="136" rx="12" fill="#14241a" stroke="#2e9e5b"/>
+    <text x="124" y="632" font-size="19" font-weight="800" fill="#f3f5f8">Telemachus</text>
+    <text x="124" y="654" font-size="13" fill="#9aa4b2">Ball Python</text>
+    <text x="124" y="712" font-size="36" font-weight="800" fill="#5fd089">88°</text>
+    <text x="288" y="632" text-anchor="end" font-size="14" font-weight="700" fill="#5fd089">OK</text>
+
+    <rect x="317" y="600" width="196" height="136" rx="12" fill="#14241a" stroke="#2e9e5b"/>
+    <text x="333" y="632" font-size="19" font-weight="800" fill="#f3f5f8">Dracarys</text>
+    <text x="333" y="654" font-size="13" fill="#9aa4b2">Bearded Dragon</text>
+    <text x="333" y="712" font-size="36" font-weight="800" fill="#5fd089">102°</text>
+    <text x="497" y="632" text-anchor="end" font-size="14" font-weight="700" fill="#5fd089">OK</text>
+
+    <rect x="526" y="600" width="196" height="136" rx="12" fill="#14241a" stroke="#2e9e5b"/>
+    <text x="542" y="632" font-size="19" font-weight="800" fill="#f3f5f8">Pascal</text>
+    <text x="542" y="654" font-size="13" fill="#9aa4b2">Veiled Chameleon</text>
+    <text x="542" y="712" font-size="36" font-weight="800" fill="#5fd089">86°</text>
+    <text x="706" y="632" text-anchor="end" font-size="14" font-weight="700" fill="#5fd089">OK</text>
+  </g>
+  <!-- tiles row 2 -->
+  <g>
+    <rect x="108" y="752" width="196" height="136" rx="12" fill="#14241a" stroke="#2e9e5b"/>
+    <text x="124" y="784" font-size="19" font-weight="800" fill="#f3f5f8">Mort</text>
+    <text x="124" y="806" font-size="13" fill="#9aa4b2">Leopard Gecko</text>
+    <text x="124" y="864" font-size="36" font-weight="800" fill="#5fd089">91°</text>
+    <text x="288" y="784" text-anchor="end" font-size="14" font-weight="700" fill="#5fd089">OK</text>
+
+    <rect x="317" y="752" width="196" height="136" rx="12" fill="#14241a" stroke="#2e9e5b"/>
+    <text x="333" y="784" font-size="19" font-weight="800" fill="#f3f5f8">Echo</text>
+    <text x="333" y="806" font-size="13" fill="#9aa4b2">Crested Gecko</text>
+    <text x="333" y="864" font-size="36" font-weight="800" fill="#5fd089">77°</text>
+    <text x="497" y="784" text-anchor="end" font-size="14" font-weight="700" fill="#5fd089">OK</text>
+
+    <rect x="526" y="752" width="196" height="136" rx="12" fill="#14241a" stroke="#2e9e5b"/>
+    <text x="542" y="784" font-size="19" font-weight="800" fill="#f3f5f8">Rack 1</text>
+    <text x="542" y="806" font-size="13" fill="#9aa4b2">Herpstat · 2 outputs</text>
+    <text x="542" y="864" font-size="36" font-weight="800" fill="#5fd089">82°</text>
+    <text x="706" y="784" text-anchor="end" font-size="14" font-weight="700" fill="#5fd089">OK</text>
+  </g>
+
+  <!-- ══ iPhone (overlapping, receiving an alert) ══ -->
+  <rect x="742" y="470" width="286" height="520" rx="44" fill="#1c1f26"/>
+  <rect x="756" y="484" width="258" height="492" rx="32" fill="#0d1118"/>
+  <!-- notch -->
+  <rect x="838" y="496" width="94" height="26" rx="13" fill="#1c1f26"/>
+  <!-- lock screen time -->
+  <text x="885" y="606" text-anchor="middle" font-size="64" font-weight="700" fill="#e8ecf2">9:41</text>
+  <text x="885" y="638" text-anchor="middle" font-size="17" fill="#8d96a3">Tuesday, July 2</text>
+
+  <!-- notification card -->
+  <rect x="770" y="668" width="230" height="130" rx="18" fill="#f4f5f7"/>
+  <path d="M786 696 A9 9 0 0 1 804 696 Z" fill="#F2A516"/>
+  <g stroke="#F2A516" stroke-width="1.8" stroke-linecap="round" transform="translate(786,680)">
+    <line x1="9" y1="7" x2="9" y2="3"/>
+    <line x1="9" y1="7" x2="9" y2="3" transform="rotate(42 9 16)"/>
+    <line x1="9" y1="7" x2="9" y2="3" transform="rotate(-42 9 16)"/>
+  </g>
+  <text x="812" y="699" font-size="14" font-weight="700" fill="#5c6675">BASK · now</text>
+  <text x="786" y="729" font-size="15.5" font-weight="800" fill="#22262e">⚠ Wasabi: humidity low</text>
+  <text x="786" y="754" font-size="14.5" fill="#5c6675">38% — target 45–65%</text>
+  <text x="786" y="776" font-size="14.5" fill="#5c6675">Go mist the chameleon 🦎</text>
+
+  <!-- second (older) notification peeking -->
+  <rect x="782" y="812" width="206" height="20" rx="10" fill="#2a3140"/>
+
+  <!-- ══ features 2×2 ══ -->
+  <g>
+    <circle cx="118" cy="1046" r="16" fill="#F2A516"/>
+    <path d="M110.5 1046 l5.5 5.5 l10 -12" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="148" y="1055" font-size="27" font-weight="600" fill="#22262e">Ready-to-flash Pi image</text>
+
+    <circle cx="578" cy="1046" r="16" fill="#F2A516"/>
+    <path d="M570.5 1046 l5.5 5.5 l10 -12" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="608" y="1055" font-size="27" font-weight="600" fill="#22262e">Alerts that ping your phone</text>
+
+    <circle cx="118" cy="1112" r="16" fill="#F2A516"/>
+    <path d="M110.5 1112 l5.5 5.5 l10 -12" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="148" y="1121" font-size="27" font-weight="600" fill="#22262e">Installs like an app</text>
+
+    <circle cx="578" cy="1112" r="16" fill="#F2A516"/>
+    <path d="M570.5 1112 l5.5 5.5 l10 -12" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="608" y="1121" font-size="27" font-weight="600" fill="#22262e">Herpstat monitoring</text>
+  </g>
+  <text x="540" y="1180" text-anchor="middle" font-size="22" fill="#5c6675">Free &amp; open-source · no cloud · no account · no subscription</text>
+
+  <!-- footer -->
+  <rect x="290" y="1218" width="500" height="64" rx="32" fill="#F2A516"/>
+  <text x="540" y="1259" text-anchor="middle" font-size="27" font-weight="800" fill="#3a2a05">jlyfshhh.github.io/bask</text>
+  <text x="540" y="1322" text-anchor="middle" font-size="21" fill="#5c6675">Follow the builds · @thebioactivekeeper</text>
+</svg>
