@@ -895,7 +895,65 @@ function renderSettingsPane() {
       <div class="daywin">
         <div class="dw-cell"><span>From</span>${hourStepper("day_start_hour", s.day_start_hour ?? 8)}</div>
         <div class="dw-cell"><span>To</span>${hourStepper("day_end_hour", s.day_end_hour ?? 20)}</div>
-      </div></div>`;
+      </div></div>
+    <div class="field"><label>📱 Phone alerts — get pinged when an enclosure needs attention</label>
+      <div id="alerts-setting"></div></div>`;
+  refreshAlertsUI();
+}
+
+// ── Opt-in phone alerts (web push) ───────────────────────────
+function urlB64ToUint8Array(b64) {
+  const pad = "=".repeat((4 - (b64.length % 4)) % 4);
+  const s = (b64 + pad).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(s), arr = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+  return arr;
+}
+async function refreshAlertsUI() {
+  const el = document.getElementById("alerts-setting");
+  if (!el) return;
+  const supported = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+  if (!supported) {
+    el.innerHTML = `<div class="muted-note" style="padding:0;text-align:left">Not supported in this browser. On iPhone, add Bask to your Home Screen first, then open it from there.</div>`;
+    return;
+  }
+  let on = false;
+  try { const reg = await navigator.serviceWorker.ready; on = !!(await reg.pushManager.getSubscription()); } catch (e) {}
+  el.innerHTML = on
+    ? `<div class="toggle-row"><button class="btn on" onclick="testAlert()">Send test</button>
+         <button class="btn" onclick="disableAlerts()">Turn off</button></div>
+       <div class="muted-note" style="padding:6px 0 0;text-align:left">✓ Alerts on for this device.</div>`
+    : `<button class="btn primary" onclick="enableAlerts()">Enable phone alerts</button>
+       <div class="muted-note" style="padding:6px 0 0;text-align:left">One tap. No app, no account — turn off anytime.</div>`;
+}
+async function enableAlerts() {
+  try {
+    const info = await api("GET", "/api/push/pubkey");
+    if (!info.enabled) { showToast("Alerts aren't available on this server"); return; }
+    const perm = await Notification.requestPermission();
+    if (perm !== "granted") { showToast("Notifications were blocked in your browser"); return; }
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlB64ToUint8Array(info.public_key),
+    });
+    await api("POST", "/api/push/subscribe", sub.toJSON());
+    showToast("✓ Phone alerts enabled");
+    refreshAlertsUI();
+  } catch (e) { showToast("Couldn't enable alerts — try again"); }
+}
+async function disableAlerts() {
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (sub) { await api("POST", "/api/push/unsubscribe", sub.toJSON()); await sub.unsubscribe(); }
+  } catch (e) {}
+  showToast("Alerts turned off");
+  refreshAlertsUI();
+}
+async function testAlert() {
+  try { await api("POST", "/api/push/test"); showToast("Test sent — check your phone"); }
+  catch (e) { showToast("Enable alerts first"); }
 }
 function stepperPlain(key, val, step, unit) {
   return `<div class="stepper" id="set-${key}" data-val="${val}" data-step="${step}" data-unit="${unit}">
@@ -947,6 +1005,9 @@ function closeEditor() { document.getElementById("editor").classList.remove("ope
 // ── init ─────────────────────────────────────────────────────
 async function loadSpecies() {
   try { _species = (await api("GET", "/api/species")).species; } catch (e) {}
+}
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js").catch(() => {});   // installable app + push
 }
 tickClock();
 setInterval(tickClock, 10000);

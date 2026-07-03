@@ -6,6 +6,7 @@ against per-species ranges, and serve the touch UI. Discovery ("add a sensor")
 reads the scanner's `discovered` table instead of starting its own scan.
 """
 import asyncio
+import base64
 import datetime
 import json
 import logging
@@ -42,6 +43,8 @@ def load_config() -> dict:
     cfg["settings"].setdefault("day_start_hour", 8)   # heat on  → day ranges
     cfg["settings"].setdefault("day_end_hour", 20)    # heat off → night ranges
     cfg.setdefault("thermostats", [])                 # optional Herpstat SpyderWeb units
+    cfg.setdefault("push", {})                         # opt-in web-push alerts (keys + subs)
+    cfg["push"].setdefault("subscriptions", [])
     return cfg
 
 
@@ -166,8 +169,10 @@ async def _herpstat_loop():
 async def lifespan(app: FastAPI):
     db.init_db()
     poller = asyncio.create_task(_herpstat_loop())
+    notifier = asyncio.create_task(_notify_loop())
     yield
     poller.cancel()
+    notifier.cancel()
 
 
 # No CORS middleware on purpose. The dashboard is served from the SAME origin as
@@ -269,9 +274,7 @@ def analyze_enclosure(enc_cfg, readings_by_mac, sensor_defs, unit, stale_cutoff,
     }
 
 
-@app.get("/api/dashboard")
-def dashboard():
-    cfg = load_config()
+def _build_dashboard(cfg):
     unit = cfg["settings"]["temp_unit"]
     low_batt = cfg["settings"]["low_battery_pct"]
     is_day = is_daytime(cfg["settings"])
@@ -306,6 +309,11 @@ def dashboard():
             "day_start_hour": cfg["settings"]["day_start_hour"],
             "day_end_hour": cfg["settings"]["day_end_hour"],
             "thermostats": thermostats}
+
+
+@app.get("/api/dashboard")
+def dashboard():
+    return _build_dashboard(load_config())
 
 
 # ── Discovery (reads the scanner's table; no BLE here) ───────────────────────
@@ -665,6 +673,163 @@ def delete_thermostat(ip: str):
     save_config(cfg)
     _thermostats.pop(ip, None)   # so it disappears from the dashboard immediately
     return {"ok": True}
+
+
+# ── Web push (optional, opt-in phone alerts) ─────────────────────────────────
+# The Pi sends a notification straight through the browser vendors' push
+# services (VAPID/Web Push) when an enclosure changes into a problem state.
+# Fully opt-in: nothing is sent unless a user taps "Enable alerts". Degrades to
+# a no-op if pywebpush isn't installed, so the dashboard works everywhere.
+
+try:
+    from pywebpush import webpush, WebPushException
+    from py_vapid import Vapid
+    _PUSH_OK = True
+except Exception:  # pragma: no cover - optional dependency
+    _PUSH_OK = False
+
+VAPID_SUBJECT = "mailto:bask@bask.local"
+_vapid_cache: dict[str, object] = {}
+
+
+def _ensure_vapid(cfg) -> dict:
+    """Generate + persist a VAPID keypair on first use; return the push config."""
+    push = cfg.setdefault("push", {})
+    if not push.get("vapid_private_pem"):
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.hazmat.primitives import serialization
+        key = ec.generate_private_key(ec.SECP256R1())
+        push["vapid_private_pem"] = key.private_bytes(
+            serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption()).decode()
+        pub = key.public_key().public_bytes(
+            serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
+        push["vapid_public_key"] = base64.urlsafe_b64encode(pub).rstrip(b"=").decode()
+        save_config(cfg)
+    return push
+
+
+def _push_send_all(cfg, payload: dict) -> None:
+    """Send one payload to every subscription; prune ones the browser has dropped."""
+    push = cfg.get("push", {})
+    subs = push.get("subscriptions", [])
+    pem = push.get("vapid_private_pem")
+    if not (_PUSH_OK and subs and pem):
+        return
+    vapid = _vapid_cache.get(pem)
+    if vapid is None:
+        vapid = _vapid_cache[pem] = Vapid.from_pem(pem.encode())
+    dead = []
+    for sub in subs:
+        try:
+            webpush(subscription_info=sub, data=json.dumps(payload),
+                    vapid_private_key=vapid, vapid_claims={"sub": VAPID_SUBJECT}, ttl=120)
+        except WebPushException as e:
+            if getattr(e.response, "status_code", None) in (404, 410):
+                dead.append(sub.get("endpoint"))
+            else:
+                log.warning(f"push failed: {e}")
+        except Exception as e:
+            log.warning(f"push error: {e}")
+    if dead:  # drop expired subscriptions
+        fresh = load_config()
+        fresh["push"]["subscriptions"] = [
+            s for s in fresh["push"]["subscriptions"] if s.get("endpoint") not in dead]
+        save_config(fresh)
+
+
+# ── Alert loop: notify on transitions into (and back out of) a problem state ──
+NOTIFY_POLL = 60
+BAD_STATES = {"warning", "danger", "stale"}
+_last_status: dict[str, str] = {}
+_notify_seeded = False
+
+
+def _alert_payload(e: dict) -> dict:
+    if e["status"] == "stale":
+        body = f"{e['name']}: no sensor signal"
+    else:
+        issues = []
+        if e.get("warm_temp_ok") is False:
+            issues.append("warm temp")
+        if e.get("cool_temp_ok") is False:
+            issues.append("cool temp")
+        if e.get("humidity_ok") is False:
+            issues.append("humidity")
+        body = f"{e['name']}: " + (" + ".join(issues) or "out of range")
+    return {"title": "⚠️ Bask alert", "body": body, "tag": e["id"], "url": "/"}
+
+
+async def _notify_loop():
+    """Compare each enclosure's status to last cycle; push on meaningful changes.
+
+    The first pass only seeds the baseline so we never fire a burst of alerts for
+    conditions that were already true when the server started.
+    """
+    global _notify_seeded
+    while True:
+        try:
+            if _PUSH_OK:
+                cfg = load_config()
+                if cfg["push"].get("subscriptions"):
+                    for e in _build_dashboard(cfg)["enclosures"]:
+                        prev, cur = _last_status.get(e["id"]), e["status"]
+                        _last_status[e["id"]] = cur
+                        if not _notify_seeded or cur == prev:
+                            continue
+                        if cur in BAD_STATES:
+                            await asyncio.to_thread(_push_send_all, cfg, _alert_payload(e))
+                        elif cur == "ok" and prev in BAD_STATES:
+                            await asyncio.to_thread(_push_send_all, cfg,
+                                {"title": "Bask", "body": f"✓ {e['name']} is back to normal",
+                                 "tag": e["id"], "url": "/"})
+                    _notify_seeded = True
+        except Exception as e:
+            log.warning(f"notify loop error: {e}")
+        await asyncio.sleep(NOTIFY_POLL)
+
+
+class PushSubscription(BaseModel):
+    endpoint: str = Field(min_length=1, max_length=2048)
+    keys: dict = Field(default_factory=dict)
+
+
+@app.get("/api/push/pubkey")
+def push_pubkey():
+    """The VAPID public key the browser needs to subscribe (or enabled=false)."""
+    if not _PUSH_OK:
+        return {"enabled": False}
+    cfg = load_config()
+    return {"enabled": True, "public_key": _ensure_vapid(cfg)["vapid_public_key"]}
+
+
+@app.post("/api/push/subscribe")
+def push_subscribe(sub: PushSubscription):
+    cfg = load_config()
+    subs = cfg["push"]["subscriptions"]
+    if not any(s.get("endpoint") == sub.endpoint for s in subs):
+        subs.append(sub.model_dump())
+        save_config(cfg)
+    return {"ok": True}
+
+
+@app.post("/api/push/unsubscribe")
+def push_unsubscribe(sub: PushSubscription):
+    cfg = load_config()
+    cfg["push"]["subscriptions"] = [
+        s for s in cfg["push"]["subscriptions"] if s.get("endpoint") != sub.endpoint]
+    save_config(cfg)
+    return {"ok": True}
+
+
+@app.post("/api/push/test")
+def push_test():
+    cfg = load_config()
+    if not (_PUSH_OK and cfg["push"].get("subscriptions")):
+        raise HTTPException(400, "No alert subscriptions on this server")
+    _push_send_all(cfg, {"title": "Bask", "url": "/",
+        "body": "\U0001f98e Alerts are on — I'll ping you if an enclosure needs attention."})
+    return {"ok": True, "sent": len(cfg["push"]["subscriptions"])}
 
 
 # Static frontend is mounted last so it doesn't shadow the API routes.
