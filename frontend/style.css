@@ -379,6 +379,9 @@ body {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
 }
 .btn:active { transform: scale(0.97); }
+a.btn { text-decoration: none; }
+.upd-ver { display: block; font-size: 0.95rem; color: var(--muted); margin-bottom: 10px; }
+.upd-ver b { color: var(--text); }
 .btn.primary  { background: var(--accent); border-color: var(--accent); color: #fff; }
 .btn.primary:active { background: var(--accent-hover); }
 .btn.ghost { background: none; border-style: dashed; color: var(--muted); width: 100%; }

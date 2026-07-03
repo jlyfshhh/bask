@@ -82,6 +82,13 @@ RestartSec=5
 WantedBy=multi-user.target
 UNIT
 
+# Allow the in-app updater (running as the unprivileged web user) to restart
+# the root-owned scanner — one exactly-scoped sudo rule, nothing else.
+echo "${USER_NAME} ALL=(root) NOPASSWD: /usr/bin/systemctl restart bask-scanner.service" \
+  > /etc/sudoers.d/012_bask-update
+chmod 440 /etc/sudoers.d/012_bask-update
+visudo -cf /etc/sudoers.d/012_bask-update
+
 # Enable services + mDNS so they start on the real first boot.
 systemctl enable bask-scanner.service
 systemctl enable bask-web.service

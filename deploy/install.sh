@@ -76,6 +76,15 @@ rfkill unblock bluetooth || true
 # Imager and this becomes bask.local — see docs/SETUP.md.)
 systemctl enable --now avahi-daemon >/dev/null 2>&1 || true
 
+# ── 5b. Allow the in-app updater to restart the scanner ──────────────────────
+# The web process restarts ITSELF by exiting (systemd Restart=always brings it
+# back on the new code), but the scanner runs as root, so restarting it needs
+# this single, exactly-scoped sudo rule — nothing else is granted.
+echo "$RUN_USER ALL=(root) NOPASSWD: /usr/bin/systemctl restart bask-scanner.service" \
+  > /etc/sudoers.d/012_bask-update
+chmod 440 /etc/sudoers.d/012_bask-update
+visudo -cf /etc/sudoers.d/012_bask-update >/dev/null || rm -f /etc/sudoers.d/012_bask-update
+
 # ── 6. systemd units ────────────────────────────────────────────────────────
 echo "==> Writing systemd units"
 

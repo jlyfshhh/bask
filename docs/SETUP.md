@@ -100,7 +100,7 @@ Almost always a Wi‑Fi typo. Re‑flash the card (step 2) and re‑enter the Wi
 Make sure the sensors have good batteries and are within a few feet of the Pi while pairing. Give the scanner a minute to hear them. The Govee Home app can confirm a sensor is alive.
 
 **How do I update Bask later?**
-Easiest: download the newest image from the [releases page](https://github.com/jlyfshhh/bask/releases/latest) and re‑flash the card — you'll re‑pair your sensors, which the proximity wizard makes quick. *(Technical users: set a username/password + SSH in Imager when flashing, then update in place any time with the one‑line installer.)*
+Right on the dashboard: **⚙ Manage → Settings → Check for updates → Update now**. It takes about a minute and **never touches your settings or sensor pairings**. (While you're there, tap **💾 Download backup** occasionally — one file restores everything if an SD card ever dies.)
 
 **How do I see what it's doing / read logs?** *(technical users, over SSH)*
 `journalctl -u bask-scanner -f` (Bluetooth scanner) or `journalctl -u bask-web -f` (dashboard). Press `Ctrl+C` to stop watching.

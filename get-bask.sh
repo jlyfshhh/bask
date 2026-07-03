@@ -43,7 +43,19 @@ fi
 # ── 2. Download (or update) Bask ────────────────────────────────────────────
 if [[ -d "$BASK_DIR/.git" ]]; then
   say "Updating existing install in $BASK_DIR"
-  git -C "$BASK_DIR" pull --ff-only
+  if git -C "$BASK_DIR" symbolic-ref -q HEAD >/dev/null; then
+    # On a branch (one-liner install) — fast-forward it.
+    git -C "$BASK_DIR" pull --ff-only
+  else
+    # Detached HEAD — the prebuilt image is cloned at a release tag, where
+    # `git pull` silently no-ops. Jump to the newest release tag instead.
+    say "Image install detected — moving to the newest release"
+    git -C "$BASK_DIR" fetch --tags --quiet origin
+    LATEST="$(git -C "$BASK_DIR" -c versionsort.suffix=- tag --list 'v*' --sort=-v:refname | head -1)"
+    [[ -n "$LATEST" ]] || die "No release tags found in the repository."
+    git -C "$BASK_DIR" checkout --quiet "$LATEST"
+    say "Now on Bask $LATEST"
+  fi
 else
   [[ -e "$BASK_DIR" ]] && die "$BASK_DIR already exists but isn't a Bask checkout. Move it aside or set BASK_DIR=..."
   say "Downloading Bask into $BASK_DIR"

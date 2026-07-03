@@ -897,8 +897,83 @@ function renderSettingsPane() {
         <div class="dw-cell"><span>To</span>${hourStepper("day_end_hour", s.day_end_hour ?? 20)}</div>
       </div></div>
     <div class="field"><label>📱 Phone alerts — get pinged when an enclosure needs attention</label>
-      <div id="alerts-setting"></div></div>`;
+      <div id="alerts-setting"></div></div>
+    <div class="field"><label>🔄 Updates</label>
+      <div id="update-setting"></div></div>
+    <div class="field"><label>💾 Backup — your enclosures, ranges and settings in one file</label>
+      <div class="toggle-row">
+        <a class="btn" href="/api/config/export" download>⬇ Download backup</a>
+        <button class="btn" onclick="document.getElementById('import-file').click()">⬆ Restore from backup</button>
+      </div>
+      <input type="file" id="import-file" accept="application/json,.json" style="display:none"
+             onchange="importSettings(this)"></div>`;
   refreshAlertsUI();
+  refreshUpdateUI();
+}
+
+// ── Settings restore (import a backup file) ──────────────────
+async function importSettings(input) {
+  const f = input.files && input.files[0];
+  input.value = "";
+  if (!f) return;
+  let data;
+  try { data = JSON.parse(await f.text()); }
+  catch (e) { showToast("That file isn't a Bask backup"); return; }
+  if (!confirm("Replace ALL current settings with this backup? Your current settings are saved as a restore point first.")) return;
+  try {
+    const r = await api("POST", "/api/config/import", data);
+    showToast(`Restored ${r.enclosures} enclosures, ${r.sensors} sensors`);
+    await loadManageData(); refreshDashboard();
+  } catch (e) { showToast("Restore failed — not a valid Bask backup"); }
+}
+
+// ── In-app updates ───────────────────────────────────────────
+let _upd = null;
+async function refreshUpdateUI(checking) {
+  const el = document.getElementById("update-setting");
+  if (!el) return;
+  try { _upd = await api("GET", "/api/update/status" + (checking ? "?refresh=1" : "")); }
+  catch (e) { el.innerHTML = ""; return; }
+  if (!_upd.supported) {
+    el.innerHTML = `<div class="muted-note" style="text-align:left;padding:4px 0">Bask ${esc(_upd.version || "")} — in-app updates aren't available for this install.</div>`;
+    return;
+  }
+  const ver = `<span class="upd-ver">Bask <b>${esc(_upd.version)}</b></span>`;
+  if (_upd.state === "failed") {
+    el.innerHTML = `${ver}<div class="test-result bad">✗ Update failed: ${esc(_upd.error || "unknown error")}</div>
+      <button class="btn sm" onclick="refreshUpdateUI(true)">Check again</button>`;
+  } else if (_upd.checked && _upd.available) {
+    el.innerHTML = `${ver}<div class="test-result ok">✦ ${esc(_upd.latest)} is available</div>
+      <button class="btn primary" onclick="startUpdate()">Update now</button>
+      <div class="muted-note" style="text-align:left;padding:6px 0 0">Takes about a minute. Your settings are never affected.</div>`;
+  } else if (_upd.checked) {
+    el.innerHTML = `${ver}<div class="test-result ok">✓ You're up to date</div>`;
+  } else if (_upd.check_error) {
+    el.innerHTML = `${ver}<div class="test-result bad">✗ Couldn't check (${esc(_upd.check_error)})</div>
+      <button class="btn sm" onclick="refreshUpdateUI(true)">Try again</button>`;
+  } else {
+    el.innerHTML = `${ver}<button class="btn" onclick="updChecking()">Check for updates</button>`;
+  }
+}
+function updChecking() {
+  const el = document.getElementById("update-setting");
+  if (el) el.innerHTML = `<span class="upd-ver">Checking…</span>`;
+  refreshUpdateUI(true);
+}
+async function startUpdate() {
+  const el = document.getElementById("update-setting");
+  const oldVer = _upd && _upd.version;
+  try { await api("POST", "/api/update", { confirm: true }); }
+  catch (e) { showToast("Couldn't start the update"); return; }
+  el.innerHTML = `<span class="upd-ver">Updating… the page will refresh itself. 🦎</span>`;
+  // Poll until the server comes back on a new version, then hard-reload.
+  const poll = setInterval(async () => {
+    try {
+      const s = await api("GET", "/api/update/status");
+      if (s.state === "failed") { clearInterval(poll); refreshUpdateUI(); return; }
+      if (s.version && s.version !== oldVer) { clearInterval(poll); location.reload(); }
+    } catch (e) { /* server restarting — keep polling */ }
+  }, 3000);
 }
 
 // ── Opt-in phone alerts (via the ntfy app) ───────────────────

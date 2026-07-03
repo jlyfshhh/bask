@@ -9,15 +9,19 @@ import asyncio
 import datetime
 import json
 import logging
+import os
 import secrets
+import shutil
+import subprocess
 import sys
+import threading
 import time
 import urllib.request
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import Body, FastAPI, HTTPException, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -806,6 +810,221 @@ def ntfy_qr():
     segno.make(_subscribe_url(cfg), error="m").save(
         buf, kind="svg", scale=4, border=2, dark="#0d0f15", light="#ffffff")
     return Response(content=buf.getvalue(), media_type="image/svg+xml")
+
+
+# ── Settings backup & restore ────────────────────────────────────────────────
+# Everything the user configures lives in config.json, so backup = one file.
+# Import validates structure (so a bad file can't crash the dashboard), and the
+# current config is snapshotted first so a restore is always reversible.
+
+IMPORT_MAX_BYTES = 512_000
+
+
+def _clean_str(v, fallback="", limit=64) -> str:
+    return str(v)[:limit] if isinstance(v, (str, int, float)) else fallback
+
+
+def _validate_import(data: dict) -> dict:
+    """Reduce an uploaded settings file to a structurally safe config.
+
+    Keeps only known top-level keys, drops entries missing required fields, and
+    length-caps strings. Numeric range fields pass through as-is — the range
+    evaluator already treats non-numeric/absent values as 'no limit'.
+    """
+    if not isinstance(data, dict):
+        raise ValueError("not a settings object")
+    out = {}
+    out["sensors"] = [
+        {"mac": _clean_str(s.get("mac")).upper(), "name": _clean_str(s.get("name"), "sensor"),
+         "species": _clean_str(s.get("species"), None) if s.get("species") is not None else None}
+        for s in data.get("sensors", []) if isinstance(s, dict) and s.get("mac")]
+    out["enclosures"] = []
+    for e in data.get("enclosures", []):
+        if not (isinstance(e, dict) and e.get("id") and e.get("name")):
+            continue
+        slots = [{"mac": _clean_str(sl.get("mac")).upper(), "position": _clean_str(sl.get("position"), "", 48)}
+                 for sl in e.get("sensors", []) if isinstance(sl, dict) and sl.get("mac")]
+        out["enclosures"].append({"id": _clean_str(e["id"]), "name": _clean_str(e["name"]),
+                                  "species_id": _clean_str(e.get("species_id"), None)
+                                  if e.get("species_id") is not None else None,
+                                  "sensors": slots})
+    out["species"] = [
+        {**{k: v for k, v in sp.items() if isinstance(k, str)},
+         "id": _clean_str(sp["id"]), "name": _clean_str(sp["name"])}
+        for sp in data.get("species", [])
+        if isinstance(sp, dict) and sp.get("id") and sp.get("name")]
+    for key in ("settings", "ntfy"):
+        if isinstance(data.get(key), dict):
+            out[key] = data[key]
+    out["thermostats"] = [
+        {"ip": _clean_str(t.get("ip")), "name": _clean_str(t.get("name"), None)
+         if t.get("name") is not None else None, "enabled": bool(t.get("enabled", True))}
+        for t in data.get("thermostats", []) if isinstance(t, dict) and t.get("ip")]
+    if not (out["sensors"] or out["enclosures"] or out["species"]):
+        raise ValueError("no recognizable Bask settings in this file")
+    return out
+
+
+@app.get("/api/config/export")
+def export_config():
+    cfg = load_config()
+    return Response(content=json.dumps(cfg, indent=2), media_type="application/json",
+                    headers={"Content-Disposition": 'attachment; filename="bask-settings.json"'})
+
+
+@app.post("/api/config/import")
+def import_config(payload: dict = Body()):
+    if len(json.dumps(payload)) > IMPORT_MAX_BYTES:
+        raise HTTPException(413, "Settings file too large")
+    try:
+        clean = _validate_import(payload)
+    except ValueError as e:
+        raise HTTPException(422, f"Not a valid Bask settings file: {e}")
+    if CONFIG_PATH.exists():
+        ts = time.strftime("%Y%m%d-%H%M%S")
+        shutil.copy2(CONFIG_PATH, CONFIG_PATH.with_name(f"config.json.bak-{ts}-preimport"))
+    save_config(clean)
+    return {"ok": True, "enclosures": len(clean["enclosures"]),
+            "sensors": len(clean["sensors"]), "species": len(clean["species"])}
+
+
+# ── In-app updates ───────────────────────────────────────────────────────────
+# One-tap update from the Settings screen. Security posture (the API is
+# unauthenticated on a trusted LAN, so this endpoint must not add new risk):
+#   * No client input reaches any command — the repo URL is whatever the
+#     install was cloned from (the official repo), and the target is resolved
+#     server-side as "newest release tag" / "tip of the tracked branch".
+#     The worst a hostile LAN client can do is trigger a legitimate update.
+#   * POST requires a JSON body — cross-site forms can't send application/json
+#     without a CORS preflight, which this same-origin-only API rejects. So a
+#     malicious website can't trigger updates (CSRF-safe).
+#   * git/pip run unprivileged with list-args (no shell). The only privilege
+#     used is an optional sudoers rule scoped to restarting bask-scanner.
+#   * Refuses to run over local code modifications, compile-checks the new
+#     code, and rolls back to the previous commit if anything fails.
+# config.json and readings.db are untracked, so updates never touch user data.
+
+ROOT = Path(__file__).parent.parent
+_update_state = {"state": "idle", "error": None, "from": None, "to": None}
+_update_lock = threading.Lock()
+
+
+def _git(*args, timeout=120) -> str:
+    # versionsort.suffix=- makes v1.0.1-rc1 sort BEFORE v1.0.1 (pre-release),
+    # so "newest tag" never picks an rc over the release.
+    r = subprocess.run(["git", "-c", "versionsort.suffix=-", *args],
+                       cwd=ROOT, capture_output=True, text=True, timeout=timeout)
+    if r.returncode != 0:
+        raise RuntimeError((r.stderr or r.stdout).strip()[:300] or f"git {args[0]} failed")
+    return r.stdout.strip()
+
+
+def _update_supported() -> bool:
+    return (ROOT / ".git").is_dir() and shutil.which("git") is not None
+
+
+def _current_version() -> str:
+    try:
+        return _git("describe", "--tags", "--always", timeout=10)
+    except Exception:
+        return "unknown"
+
+
+def _tracked_branch() -> str | None:
+    """Current branch name, or None for detached HEAD (image installs)."""
+    r = subprocess.run(["git", "symbolic-ref", "-q", "--short", "HEAD"],
+                       cwd=ROOT, capture_output=True, text=True, timeout=10)
+    return r.stdout.strip() or None
+
+
+def _latest_tag() -> str | None:
+    tags = _git("tag", "--list", "v*", "--sort=-v:refname", timeout=10).splitlines()
+    return tags[0] if tags else None
+
+
+@app.get("/api/update/status")
+def update_status(refresh: bool = False):
+    out = {"supported": _update_supported(), **_update_state,
+           "version": _current_version() if _update_supported() else None}
+    if not out["supported"] or _update_state["state"] == "updating":
+        return out
+    if refresh:
+        try:
+            _git("fetch", "--tags", "--quiet", "origin", timeout=90)
+            branch = _tracked_branch()
+            if branch:
+                behind = int(_git("rev-list", "--count", f"HEAD..origin/{branch}", timeout=15) or 0)
+                out["available"] = behind > 0
+                out["latest"] = f"{branch} (+{behind} update{'s' if behind != 1 else ''})" if behind else out["version"]
+            else:
+                latest = _latest_tag()
+                try:
+                    current = _git("describe", "--tags", "--exact-match", "HEAD", timeout=10)
+                except Exception:
+                    current = None
+                out["available"] = bool(latest) and latest != current
+                out["latest"] = latest
+            out["checked"] = True
+        except Exception as e:
+            out["check_error"] = str(e)[:200]
+    return out
+
+
+def _do_update():
+    try:
+        prev = _git("rev-parse", "HEAD", timeout=10)
+        _update_state.update(state="updating", error=None)
+        _update_state["from"] = _current_version()
+        if _git("status", "--porcelain", "--untracked-files=no", timeout=15):
+            raise RuntimeError("Local code changes detected — update manually to avoid losing them")
+        _git("fetch", "--tags", "--quiet", "origin", timeout=300)
+        branch = _tracked_branch()
+        if branch:
+            _git("merge", "--ff-only", f"origin/{branch}", timeout=60)
+        else:
+            latest = _latest_tag()
+            if not latest:
+                raise RuntimeError("No release tags found")
+            _git("checkout", "--quiet", latest, timeout=60)
+        if _git("rev-parse", "HEAD", timeout=10) == prev:
+            _update_state.update(state="idle", to=_current_version())
+            return
+        try:
+            subprocess.run([sys.executable, "-m", "pip", "install", "-q",
+                            "-r", str(ROOT / "requirements.txt")],
+                           cwd=ROOT, check=True, capture_output=True, timeout=900)
+            subprocess.run([sys.executable, "-m", "py_compile",
+                            "server/app.py", "scanner/scanner.py", "scanner/govee.py", "scanner/db.py"],
+                           cwd=ROOT, check=True, capture_output=True, timeout=120)
+        except subprocess.CalledProcessError as e:
+            _git("reset", "--hard", prev, timeout=30)   # tree was clean; safe to rewind
+            raise RuntimeError("New version failed checks — rolled back "
+                               f"({(e.stderr or b'').decode(errors='replace')[:150]})")
+        _update_state.update(state="restarting", to=_current_version())
+        log.info(f"updated {_update_state['from']} -> {_update_state['to']}; restarting")
+        # Scanner restart needs root: use the narrowly-scoped sudoers rule if
+        # present; otherwise the scanner simply picks the update up on next boot.
+        subprocess.run(["sudo", "-n", "systemctl", "restart", "bask-scanner.service"],
+                       capture_output=True, timeout=30)
+        time.sleep(1.0)
+        os._exit(0)   # systemd (Restart=always) relaunches us on the new code
+    except Exception as e:
+        _update_state.update(state="failed", error=str(e)[:300])
+        log.warning(f"update failed: {e}")
+
+
+@app.post("/api/update")
+def start_update(payload: dict = Body()):
+    if payload.get("confirm") is not True:      # JSON body → CSRF preflight protection
+        raise HTTPException(422, "confirm required")
+    if not _update_supported():
+        raise HTTPException(400, "This install isn't a git checkout — update manually")
+    with _update_lock:
+        if _update_state["state"] == "updating":
+            raise HTTPException(409, "Update already in progress")
+        _update_state.update(state="updating", error=None)
+    threading.Thread(target=_do_update, daemon=True).start()
+    return {"ok": True, "state": "updating"}
 
 
 # Static frontend is mounted last so it doesn't shadow the API routes.

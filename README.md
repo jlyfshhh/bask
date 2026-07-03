@@ -155,6 +155,16 @@ sudo systemctl enable --now bask-scanner bask-web
 
 Run as a **non-root** user that's in the `bluetooth` group — Bask never needs root.
 
+## Updating
+
+Open **⚙ Manage → Settings → Check for updates**, then tap **Update now** — Bask fetches the newest release, verifies it, and restarts itself (about a minute). **Your settings and sensor pairings are never affected** — everything you configure lives in `config.json`, which updates don't touch.
+
+Settings has a **💾 Download backup** button too — one file with all your enclosures, ranges, and settings, restorable on any Bask install. Worth keeping a copy somewhere safe.
+
+How the updater stays safe on an unauthenticated LAN API: it accepts no parameters — it can only move the install to the newest release tag of the repo it was cloned from, so the worst a request can do is trigger a legitimate update. It runs unprivileged, refuses to run over locally modified code, verifies the new version compiles before switching over, and rolls back automatically if anything fails. Cross-site requests can't trigger it (JSON-body requirement + same-origin policy).
+
+*(CLI alternative: re-run `get-bask.sh` over SSH — it fast-forwards one-liner installs and moves image installs to the newest release.)*
+
 ## Configuration
 
 Everything lives in `config.json` (created from `config.example.json`). You don't need to hand-edit it — the **Manage** screen in the UI does it all:
