@@ -34,6 +34,8 @@ It runs on an inexpensive **Raspberry Pi** — a Pi 4, Pi 3B+, or Zero 2 W all w
 - ☀️🌙 **Day / night ranges** — set different ranges for heat-on vs. heat-off (configurable schedule). The dashboard switches automatically and shows which set is active.
 - 🔋 **Battery + signal monitoring** — warns before a sensor dies or drops off.
 - 🌡️ **Herpstat thermostat monitoring** *(optional)* — add [Herpstat SpyderWeb](https://www.spyderrobotics.com/) thermostats by IP and see each output's live probe temp, setpoint, output %, and alarms in a compact strip. Hidden entirely until you add one.
+- 📲 **Phone alerts** *(optional)* — get a notification on your phone when an enclosure goes out of range or a sensor drops off. Two-minute setup with the free [ntfy](https://ntfy.sh) app; the Pi only sends outbound, so nothing is exposed.
+- 📱 **Installs like an app** — add Bask to your phone or tablet's home screen and it launches fullscreen with its own icon, like a native app.
 - 👆 **Touch-first UI** — built for a wall-mounted touchscreen, with proximity pairing (hold a sensor near the host to add it).
 - 🪶 **Tiny footprint** — two small Python processes and a vanilla-JS frontend. No build step, no framework, no database server.
 
@@ -66,11 +68,15 @@ Bask is hardware-agnostic — adapt it to whatever you have:
 
 ## Install
 
-### Easiest — one line (recommended)
+### Easiest — flash the ready-made image (recommended)
 
-New to Raspberry Pi? **Start with the [beginner's setup guide](docs/SETUP.md)** — it covers what to buy and how to flash the SD card before you get here.
+No terminal, no commands. **[Download the latest Bask image](https://github.com/jlyfshhh/bask/releases/latest)**, write it to a microSD card with [Raspberry Pi Imager](https://www.raspberrypi.com/software/) (*Choose OS → Use custom*), set your **Wi‑Fi** in Imager's customisation screen, and power on the Pi. A couple of minutes later, open **http://bask.local:8080** on any device on your network. Works on any 64-bit Pi (Pi 3/3B+, 4, 400, 5, Zero 2 W).
 
-Already have a Raspberry Pi on your network with SSH enabled? Just run:
+New to Raspberry Pi entirely? The **[beginner's setup guide](docs/SETUP.md)** walks through every step with nothing assumed — including what to buy.
+
+### One line on an existing Pi
+
+Already running Raspberry Pi OS with SSH? Just run:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jlyfshhh/bask/main/get-bask.sh | bash
@@ -169,9 +175,17 @@ If you run [Herpstat SpyderWeb](https://www.spyderrobotics.com/) thermostats, Ba
 
 **2. Add it in Bask.** Go to **⚙ Manage → Thermostats → + Add**, enter the unit's IP, and tap **⚡ Test connection** to verify before saving. Bask polls each unit every few seconds and caches the result, so an offline or slow unit never stalls the dashboard. Output names come straight from the thermostat, so naming an output after its enclosure (e.g. "Ball Python") lines the strip up with your cards.
 
+## Phone alerts (optional)
+
+Bask can ping your phone when an enclosure goes out of range, loses signal, or recovers. It uses [ntfy](https://ntfy.sh), a free open-source notification service: Bask generates a private, random topic for your install, and the Pi **posts outbound only** — nothing on your network is exposed, and Bask still needs no account.
+
+Setup takes about two minutes: **⚙ Manage → Settings → Set up phone alerts**, install the free ntfy app (App Store / Google Play), and scan the QR code Bask shows you. Tap **Send test** to confirm. Alerts fire on status *transitions* (in-range → out-of-range and back), so you get one ping per event, not a flood.
+
+> Your topic name is effectively a password — anyone who knows it can see your alerts (enclosure names and readings only). Bask generates a long random one; keep it private. Self-hosting an ntfy server also works — set `ntfy.server` in `config.json`.
+
 ## Displaying it
 
-- **Any tablet / phone / computer** — just open the URL. A cheap wall-mounted tablet makes an excellent always-on display.
+- **Any tablet / phone / computer** — just open the URL. A cheap wall-mounted tablet makes an excellent always-on display. On a phone or tablet, use your browser's **Add to Home Screen** — Bask installs like an app and launches fullscreen.
 - **A monitor on the host** — `kiosk.sh` launches a fullscreen browser (it prefers the lightweight [cog](https://github.com/Igalia/cog) WPE browser, with Chromium as a fallback). Rendering a browser on a very low-power host (e.g. Pi Zero W) is slow, so a separate display device is usually smoother.
 - **Smart displays** — anything with a web browser works. (For example, an Amazon Echo Show can open the URL in its Silk browser; `frontend/keep.js` includes a small same-origin keep-alive so Silk-class browsers don't time out — it activates only on that user-agent and is a no-op everywhere else.)
 

@@ -1,10 +1,10 @@
 # Bask setup — the complete beginner's guide
 
-Never touched a Raspberry Pi before? That's fine. This guide takes you from a box of parts to a working dashboard on your wall, step by step. No prior experience needed. Set aside about **30 minutes** (most of it is the Pi installing things by itself).
+Never touched a Raspberry Pi before? That's fine. This guide takes you from a box of parts to a working dashboard on your wall, step by step. No prior experience needed — **no terminal, no commands, no code.** Set aside about **20 minutes**.
 
-![Flash → boot → one line → open bask.local](setup-flow.svg)
+![Flash → boot → it runs itself → open bask.local](setup-flow.svg)
 
-> **The short version:** flash an SD card with a free app, plug it into the Pi, paste one line, then open **http://bask.local:8080**. The rest of this page is just that — slowly, with nothing assumed.
+> **The short version:** download the ready-made Bask image, write it to an SD card with a free app (typing in your Wi‑Fi as you do), plug it into the Pi, then open **http://bask.local:8080**. The rest of this page is just that — slowly, with nothing assumed.
 
 ---
 
@@ -25,64 +25,35 @@ You need a small always-on computer (a Raspberry Pi) and an SD card for it. Here
 
 ---
 
-## 2. Flash the SD card
+## 2. Flash the Bask card
 
-"Flashing" just means copying the operating system onto the card. There's an official free app that does it all.
+"Flashing" just means writing Bask onto the SD card. A free official app does it all — and Bask comes as a **ready-made image**, so there's nothing to install afterwards.
 
-1. On your computer, download **Raspberry Pi Imager** from **[raspberrypi.com/software](https://www.raspberrypi.com/software/)** and install it.
-2. Put your microSD card into your computer (use a USB adapter if needed).
-3. Open Raspberry Pi Imager and set the three buttons:
+1. **[Download the latest Bask image](https://github.com/jlyfshhh/bask/releases/latest)** — the file ending in **`.img.xz`** (about 600 MB). No need to unzip it.
+2. On your computer, download **Raspberry Pi Imager** from **[raspberrypi.com/software](https://www.raspberrypi.com/software/)** and install it.
+3. Put your microSD card into your computer (use a USB adapter if needed).
+4. Open Raspberry Pi Imager and set the three buttons:
    - **Choose Device** → the Pi model you have (e.g. *Raspberry Pi 4* or *Raspberry Pi Zero 2 W*).
-   - **Choose OS** → *Raspberry Pi OS (other)* → **Raspberry Pi OS Lite (64‑bit)**. ("Lite" has no desktop — exactly what we want for an appliance.)
+   - **Choose OS** → scroll to the bottom → **Use custom** → pick the **Bask `.img.xz`** you downloaded.
    - **Choose Storage** → your SD card. **Double‑check you picked the card and not your hard drive.**
-4. Click **Next**. When it asks *"Would you like to apply OS customisation settings?"*, click **Edit Settings**. This step is what makes everything else painless — fill it in carefully:
-   - **Set hostname:** `bask`  ← this is what makes `bask.local` work later.
-   - **Enable SSH** (on the *Services* tab) → *Use password authentication*.
-   - **Set username and password:** pick a username (e.g. `keeper`) and a password you'll remember. **Write these down** — you'll type them once.
+5. Click **Next**. When it asks *"Would you like to apply OS customisation settings?"*, click **Edit Settings** and fill in just two things:
    - **Configure wireless LAN:** your Wi‑Fi network name and password, and your country.
    - **Set locale / time zone** to yours.
-5. **Save**, then **Yes** to apply the settings, then **Yes** to write. It copies and verifies — a few minutes. When it says you can remove the card, do so.
 
-> If the wording differs slightly by version, the gist is the same: pick OS Lite, and use the **gear / Edit Settings** screen to set **hostname = bask**, **SSH on**, **a username + password**, and **your Wi‑Fi**.
+   That's all you need — the hostname is already `bask`, and there's no account to create. *(Leave "Set username and password" alone unless you're technical and want SSH access later.)*
+6. **Save**, then **Yes** to apply the settings, then **Yes** to write. It copies and verifies — a few minutes. When it says you can remove the card, do so.
 
 ---
 
-## 3. First boot
+## 3. Plug it in
 
 1. Put the SD card into the Pi.
 2. Plug the **power** into the Pi's power port (labelled `PWR` — USB‑C on a Pi 4, micro‑USB on a Pi 3 or Zero 2 W).
-3. Wait about **2 minutes** for its first start‑up. There's no screen — that's normal. It's quietly joining your Wi‑Fi.
+3. Wait **2–3 minutes** for its first start‑up. There's no screen and no lights to watch — that's normal. It's quietly joining your Wi‑Fi and starting Bask. It will do this automatically every time it has power, forever.
 
 ---
 
-## 4. Install Bask (one line)
-
-Now you'll connect to the Pi from your computer and paste a single command.
-
-1. Open a terminal on your computer:
-   - **Mac:** open the **Terminal** app (Applications → Utilities).
-   - **Windows:** open **PowerShell** or **Windows Terminal** (Start menu → type "PowerShell").
-2. Connect to the Pi by typing this (use the **username** you chose in step 2):
-
-   ```bash
-   ssh keeper@bask.local
-   ```
-
-   The first time, it asks *"Are you sure you want to continue connecting?"* — type **`yes`**. Then enter the **password** you set. (You won't see the password as you type — that's normal.)
-
-   > Can't connect? Jump to [Troubleshooting](#troubleshooting) — it's almost always one small thing.
-
-3. Once you're connected (the prompt now shows your Pi), paste this **one line** and press Enter:
-
-   ```bash
-   curl -fsSL https://raw.githubusercontent.com/jlyfshhh/bask/main/get-bask.sh | bash
-   ```
-
-   It downloads Bask, installs what it needs, and sets it to start automatically forever. On a Zero 2 W this takes a **few minutes** — let it run. When it's done, it prints your dashboard address.
-
----
-
-## 5. Open the dashboard
+## 4. Open the dashboard
 
 1. On your **phone, tablet, or computer** (connected to the same Wi‑Fi), open a web browser and go to:
 
@@ -91,31 +62,45 @@ Now you'll connect to the Pi from your computer and paste a single command.
 2. You'll see the Bask dashboard. Tap **⚙ Manage → Sensors → Pair by proximity**, then hold a Govee sensor a few inches from the Pi. When it pops up, tap to assign it to an enclosure's warm or cool side. Repeat for each sensor.
 3. Set up your **enclosures** and **species ranges** under **⚙ Manage** so Bask knows what "good" looks like.
 
+**Nice extras once you're up:**
+
+- 📱 **Make it an app:** on your phone or tablet, use the browser's **Add to Home Screen** — Bask gets its own icon and opens fullscreen like a native app.
+- 📲 **Phone alerts:** in **⚙ Manage → Settings**, tap **Set up phone alerts** — install the free **ntfy** app and scan the QR code Bask shows you. Your phone then gets a ping whenever an enclosure needs attention. (~2 minutes, optional.)
+
 That's it. Leave the Pi plugged in — it starts Bask automatically every time it powers on. For wall‑mounting and always‑on display ideas, see **[Displaying it](../README.md#displaying-it)** in the main README.
 
 Running Herpstat thermostats too? See **[Herpstat thermostats](../README.md#herpstat-thermostats-optional)**.
 
 ---
 
+## Alternative: install on an existing Raspberry Pi
+
+Already have a Pi running Raspberry Pi OS (with SSH)? You don't need the image — connect to it and paste one line:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jlyfshhh/bask/main/get-bask.sh | bash
+```
+
+It downloads Bask, installs what it needs, and sets it to start automatically on boot. Run the same line again any time to update.
+
+---
+
 ## Troubleshooting
 
-**`ssh: could not resolve hostname bask.local` (or the dashboard URL won't load).**
-Your network may not support `.local` names. Find the Pi's IP address instead:
+**`bask.local` won't load.**
+Give the Pi a full 3 minutes on first boot, then try again. Still nothing? Your network may not support `.local` names — find the Pi's IP address instead:
 - Open your Wi‑Fi router's admin page and look in its list of connected devices for **`bask`** — note its IP (looks like `192.168.1.42`).
-- Then use that number everywhere instead of `bask.local`: `ssh keeper@192.168.1.42`, and open `http://192.168.1.42:8080`.
+- Then open `http://192.168.1.42:8080` (your number) instead.
 - **Windows only:** `.local` names need Apple's *Bonjour* service. If you have iTunes installed you already have it; otherwise the IP‑address method above always works.
 
-**"Connection refused" right after install.**
-The Pi Zero 2 W is small — give it a minute after install to start up, then refresh. You can check it's running with `sudo systemctl status bask-web`.
+**It's still not on the network at all.**
+Almost always a Wi‑Fi typo. Re‑flash the card (step 2) and re‑enter the Wi‑Fi name, password, and **country** in the **Edit Settings** screen — it only takes a few minutes and can't hurt anything.
 
 **Dashboard loads but no sensors appear.**
 Make sure the sensors have good batteries and are within a few feet of the Pi while pairing. Give the scanner a minute to hear them. The Govee Home app can confirm a sensor is alive.
 
-**I made a typo in the Wi‑Fi or hostname when flashing.**
-Easiest fix is to re‑flash the card (step 2) and fill in the **Edit Settings** screen again. It only takes a few minutes.
-
 **How do I update Bask later?**
-Connect again (`ssh keeper@bask.local`) and run the same one‑line installer. It pulls the latest version and restarts automatically.
+Easiest: download the newest image from the [releases page](https://github.com/jlyfshhh/bask/releases/latest) and re‑flash the card — you'll re‑pair your sensors, which the proximity wizard makes quick. *(Technical users: set a username/password + SSH in Imager when flashing, then update in place any time with the one‑line installer.)*
 
-**How do I see what it's doing / read logs?**
+**How do I see what it's doing / read logs?** *(technical users, over SSH)*
 `journalctl -u bask-scanner -f` (Bluetooth scanner) or `journalctl -u bask-web -f` (dashboard). Press `Ctrl+C` to stop watching.
