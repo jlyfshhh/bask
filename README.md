@@ -237,6 +237,18 @@ kiosk.sh          optional fullscreen browser launcher for a host-attached scree
 docs/SETUP.md     complete beginner's guide (hardware → flashing → install)
 ```
 
+## The animal-room family
+
+Bask is one of three companion projects for keepers:
+
+| | Project | What it watches |
+|---|---|---|
+| ☀️ | **Bask** *(this repo)* | The environment — live temperature & humidity on a wall display |
+| 🐍 | **[Shed](https://github.com/jlyfshhh/shed)** | The care — feeding, weights, enclosure work, and history for terrestrial animals |
+| 💧 | **[Clarity](https://github.com/jlyfshhh/clarity)** | The water — aquarium & pond tests, maintenance, and livestock |
+
+They're separate self-hosted services on purpose — one app can never take down another — but they share a design language, and Shed & Clarity link mixed habitats with stable shared IDs.
+
 ## 🦗 Buy the animals some crickets
 
 Bask is free and always will be, but if it saved one of your animals a rough night, or you just think it's neat, you can chip in a couple bucks toward the cricket fund.
