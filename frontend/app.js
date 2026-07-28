@@ -16,7 +16,11 @@ async function api(method, url, body) {
   const opt = { method, headers: { "Content-Type": "application/json" } };
   if (body !== undefined) opt.body = JSON.stringify(body);
   const res = await fetch(url, opt);
-  if (!res.ok) throw new Error(`${method} ${url} -> ${res.status}`);
+  if (!res.ok) {
+    let message = `${method} ${url} -> ${res.status}`;
+    try { message = (await res.json()).detail || message; } catch (_) {}
+    throw new Error(message);
+  }
   return res.status === 204 ? null : res.json();
 }
 function esc(s) {
@@ -52,6 +56,7 @@ async function refreshDashboard() {
     renderSummary(data.counts);
     renderStatusBanner(data);
     renderPeriod(data);
+    renderRoomClimate(data.room_climate);
     renderThermostats(data);
     renderGrid(data);
     const t = new Date(data.updated_at * 1000);
@@ -60,6 +65,29 @@ async function refreshDashboard() {
   } catch (e) {
     document.getElementById("updated").textContent = "⚠ connection lost — retrying";
   }
+}
+
+// Small, read-only Cielo Breez card in the top-right. It stays completely
+// hidden until configured and never affects enclosure status calculations.
+function renderRoomClimate(climate) {
+  const el = document.getElementById("room-climate");
+  if (!el) return;
+  if (!climate?.configured) { el.style.display = "none"; return; }
+  el.style.display = "grid";
+  const unit = climate.temp_unit === "C" ? "°C" : "°F";
+  const temp = climate.temperature == null ? "—" : `${climate.temperature}${unit}`;
+  const humidity = climate.humidity == null ? "—" : `${climate.humidity}%`;
+  const unavailable = climate.error || climate.stale || climate.online === false;
+  el.className = "room-climate" + (unavailable ? " unavailable" : "");
+  const state = climate.error ? climate.error :
+    climate.stale ? "Status is stale" :
+    climate.online === false ? "Controller offline" :
+    climate.power ? `${climate.mode || "on"}${climate.target == null ? "" : ` → ${climate.target}${unit}`}` : "off";
+  el.innerHTML = `
+    <span class="rc-label">${esc(climate.name || "Animal Room")}</span>
+    <span class="rc-reading">${temp}<small>${humidity}</small></span>
+    <span class="rc-state">${esc(state)}</span>`;
+  el.title = "Cielo Breez room climate — tap to manage";
 }
 
 function renderSummary(counts) {
@@ -329,12 +357,13 @@ function switchTab(name) {
 }
 
 async function loadManageData() {
-  const [sres, eres, spres, tres] = await Promise.all([
+  const [sres, eres, spres, tres, cres] = await Promise.all([
     api("GET", "/api/sensors"), api("GET", "/api/enclosures"),
-    api("GET", "/api/species"), api("GET", "/api/thermostats"),
+    api("GET", "/api/species"), api("GET", "/api/thermostats"), api("GET", "/api/cielo"),
   ]);
   _sensors = sres.sensors; _enclosures = eres.enclosures; _species = spres.species;
   _thermostats_cfg = tres.thermostats;
+  _cielo = cres;
   _settings = sres.settings;
   renderEnclosuresPane();
   renderSensorsPane();
@@ -344,6 +373,7 @@ async function loadManageData() {
 }
 let _settings = {};
 let _thermostats_cfg = [];
+let _cielo = {};
 
 // ── Enclosures pane ──────────────────────────────────────────
 function renderEnclosuresPane() {
@@ -808,7 +838,92 @@ function renderThermostatsPane() {
     <div class="scan-hint">Monitor Herpstat SpyderWeb thermostats on your network. On each unit, enable its
       <b>web status page</b> so <code>http://&lt;ip&gt;/RAWSTATUS</code> responds, then add its IP here.
       The dashboard strip appears once a unit is added.</div>
-    ${rows || `<div class="muted-note">No thermostats yet. This feature is optional — add one to show the live strip.</div>`}`;
+    ${rows || `<div class="muted-note">No thermostats yet. This feature is optional — add one to show the live strip.</div>`}
+    ${renderCieloSettings()}`;
+}
+
+function renderCieloSettings() {
+  if (!_cielo.configured) {
+    return `<div class="integration-card">
+      <div class="integration-head"><div><h2>Animal room climate</h2>
+        <div class="row-sub">Cielo Breez Max · optional</div></div>
+        <button class="btn primary" onclick="connectCielo()">Connect</button></div>
+      <p>Show the mini-split controller's temperature, humidity, mode, and setpoint in the dashboard corner.
+        Bask only reads its status; it cannot change the AC.</p>
+      <p class="cloud-note">Cloud connection · updates about every 2 minutes</p>
+    </div>`;
+  }
+  const unit = _cielo.temp_unit === "C" ? "°C" : "°F";
+  const deviceOptions = (_cielo.devices || []).map(d =>
+    `<option value="${esc(d.id)}" ${d.id === _cielo.selected_device_id ? "selected" : ""}>${esc(d.name)}</option>`).join("");
+  const reading = _cielo.temperature == null ? "Waiting for first update…" :
+    `${_cielo.temperature}${unit} · ${_cielo.humidity ?? "—"}% · ${_cielo.power ? esc(_cielo.mode || "on") : "off"}`;
+  return `<div class="integration-card">
+    <div class="integration-head"><div><h2>Animal room climate</h2>
+      <div class="row-sub"><span class="tdot ${_cielo.error || _cielo.online === false ? "bad" : "ok"}"></span>
+        ${esc(_cielo.name || "Cielo Breez Max")}</div></div>
+      <button class="btn danger sm" onclick="disconnectCielo()">Disconnect</button></div>
+    <p>${reading}</p>
+    ${(_cielo.devices || []).length > 1 ? `<div class="field compact"><label>Controller</label>
+      <select id="cielo-device" onchange="selectCieloDevice(this.value)">
+        <option value="">Choose a controller…</option>${deviceOptions}</select></div>` : ""}
+    <p class="cloud-note">${esc(_cielo.error || "Read-only Cielo cloud connection · updates about every 2 minutes")}</p>
+  </div>`;
+}
+
+function connectCielo() {
+  openEditor(`
+    <div class="sheet-head"><h2>Connect Cielo Breez</h2>
+      <button class="close-btn" onclick="closeEditor()">✕</button></div>
+    <div class="scan-hint"><b>Important:</b> Cielo permits each API key to be used only once and limits
+      generation to three keys per month. Generate a fresh key in the Cielo app, paste it once here,
+      and let Bask preserve the resulting token.</div>
+    <div class="field"><label>Cielo Connect API key</label>
+      <input type="password" id="cielo-key" autocomplete="off" spellcheck="false"
+             placeholder="Paste API key"></div>
+    <div id="cielo-result" class="test-result"></div>
+    <div class="form-actions"><button class="btn primary" id="cielo-connect-btn"
+      onclick="saveCielo()">Connect once</button></div>`);
+}
+
+async function saveCielo() {
+  const keyEl = document.getElementById("cielo-key");
+  const out = document.getElementById("cielo-result");
+  const btn = document.getElementById("cielo-connect-btn");
+  const apiKey = keyEl.value.trim();
+  if (!apiKey) return;
+  btn.disabled = true;
+  out.className = "test-result"; out.textContent = "Connecting…";
+  try {
+    await api("POST", "/api/cielo/connect", { api_key: apiKey });
+    keyEl.value = "";
+    closeEditor();
+    await loadManageData();
+    refreshDashboard();
+    showToast("Cielo Breez connected");
+  } catch (e) {
+    keyEl.value = "";
+    out.className = "test-result bad";
+    out.textContent = e.message;
+    btn.disabled = false;
+  }
+}
+
+async function selectCieloDevice(deviceId) {
+  if (!deviceId) return;
+  try {
+    await api("PUT", "/api/cielo/device", { device_id: deviceId });
+    await loadManageData();
+    refreshDashboard();
+  } catch (e) { showToast(e.message); }
+}
+
+async function disconnectCielo() {
+  if (!confirm("Disconnect Cielo and remove its saved API credentials from this Bask server?")) return;
+  await api("DELETE", "/api/cielo");
+  await loadManageData();
+  refreshDashboard();
+  showToast("Cielo disconnected");
 }
 
 function editThermostat(ip) {

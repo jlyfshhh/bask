@@ -12,6 +12,7 @@ data/
 
 # Personal configuration — copy config.example.json to config.json and edit
 config.json
+cielo-secrets.json
 *.bak-*
 
 # Editor / OS / tooling

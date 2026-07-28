@@ -2,3 +2,4 @@ bleak>=0.21.0
 fastapi>=0.110.0
 uvicorn[standard]>=0.29.0
 segno>=1.6.0        # renders the QR code for opt-in ntfy phone alerts
+cielo-connect-api==1.0.6  # optional Cielo Breez Max room-climate status

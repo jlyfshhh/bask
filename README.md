@@ -34,6 +34,7 @@ It runs on an inexpensive **Raspberry Pi** — a Pi 4, Pi 3B+, or Zero 2 W all w
 - ☀️🌙 **Day / night ranges** — set different ranges for heat-on vs. heat-off (configurable schedule). The dashboard switches automatically and shows which set is active.
 - 🔋 **Battery + signal monitoring** — warns before a sensor dies or drops off.
 - 🌡️ **Herpstat thermostat monitoring** *(optional)* — add [Herpstat SpyderWeb](https://www.spyderrobotics.com/) thermostats by IP and see each output's live probe temp, setpoint, output %, and alarms in a compact strip. Hidden entirely until you add one.
+- ❄️ **Animal-room climate** *(optional)* — connect a Cielo Breez Max and see the room temperature, humidity, mini-split mode, and setpoint in a small dashboard-corner card.
 - 📲 **Phone alerts** *(optional)* — get a notification on your phone when an enclosure goes out of range or a sensor drops off. Two-minute setup with the free [ntfy](https://ntfy.sh) app; the Pi only sends outbound, so nothing is exposed.
 - 📱 **Installs like an app** — add Bask to your phone or tablet's home screen and it launches fullscreen with its own icon, like a native app.
 - 👆 **Touch-first UI** — built for a wall-mounted touchscreen, with proximity pairing (hold a sensor near the host to add it).
@@ -147,6 +148,16 @@ If you run [Herpstat SpyderWeb](https://www.spyderrobotics.com/) thermostats, Ba
 **1. Enable the status page on each thermostat.** Bask reads `http://<unit-ip>/RAWSTATUS`, which is off by default. In the unit's network/web settings (via its touchscreen or the Spyder app), turn on the web **status page** (sometimes labelled "web enabled" / "status"). To confirm it's on, open `http://<unit-ip>/RAWSTATUS` in a browser — you should see a page of JSON. A static IP or DHCP reservation for each unit is recommended so its address doesn't change.
 
 **2. Add it in Bask.** Go to **⚙ Manage → Thermostats → + Add**, enter the unit's IP, and tap **⚡ Test connection** to verify before saving. Bask polls each unit every few seconds and caches the result, so an offline or slow unit never stalls the dashboard. Output names come straight from the thermostat, so naming an output after its enclosure (e.g. "Ball Python") lines the strip up with your cards.
+
+### Cielo Breez Max animal-room climate (optional)
+
+Bask can also show a compact, read-only room-climate card from a Cielo Breez Max. Go to **⚙ Manage → Thermostats → Animal room climate → Connect** and paste a Cielo Connect API key. If the account has multiple controllers, choose which one represents the animal room.
+
+Cielo permits an API key to be used only once and currently limits generation to three keys per month. Bask therefore saves the resulting access token and reuses it across restarts. Generate a fresh key, submit it once, and do not revoke it while Bask is using it. The integration polls Cielo's cloud about every two minutes, so it requires internet access; an outage only marks the card stale and never affects enclosure sensor monitoring.
+
+The integration is deliberately **status-only**: Bask cannot turn the mini-split on/off or change its mode or setpoint. The API key and token are stored in `cielo-secrets.json` inside Bask's private data directory with owner-only file permissions. They are excluded from Git, Docker build context, portable config exports, and Bask's portable backup archive. Preserve the full private data directory when migrating the server, or disconnect and generate a new key afterward.
+
+See Cielo's [Breez Max integration instructions](https://support.cielowigle.com/hc/en-us/articles/40965394269079-How-to-integrate-Home-Assistant-with-Breez-Max) for where to generate a Cielo Connect key.
 
 ## Phone alerts (optional)
 

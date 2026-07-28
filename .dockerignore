@@ -5,6 +5,7 @@ _reference
 data
 venv
 config.json
+cielo-secrets.json
 readings.db*
 *.bak-*
 __pycache__

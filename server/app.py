@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scanner"))
 import db  # noqa: E402
+from server.cielo import CieloMonitor
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("web")
@@ -35,6 +36,7 @@ ROOT = Path(__file__).parent.parent
 DATA_DIR = Path(os.environ.get("BASK_DATA_DIR", ROOT))
 CONFIG_PATH = DATA_DIR / "config.json"
 FRONTEND_PATH = ROOT / "frontend"
+cielo = CieloMonitor(DATA_DIR / "cielo-secrets.json")
 
 
 def load_config() -> dict:
@@ -177,9 +179,11 @@ async def _herpstat_loop():
 async def lifespan(app: FastAPI):
     db.init_db()
     poller = asyncio.create_task(_herpstat_loop())
+    cielo_poller = asyncio.create_task(cielo.loop())
     notifier = asyncio.create_task(_notify_loop())
     yield
     poller.cancel()
+    cielo_poller.cancel()
     notifier.cancel()
 
 
@@ -330,7 +334,8 @@ def _build_dashboard(cfg):
             "period": "day" if is_day else "night",
             "day_start_hour": cfg["settings"]["day_start_hour"],
             "day_end_hour": cfg["settings"]["day_end_hour"],
-            "thermostats": thermostats}
+            "thermostats": thermostats,
+            "room_climate": cielo.public_status()}
 
 
 @app.get("/api/dashboard")
@@ -694,6 +699,51 @@ def delete_thermostat(ip: str):
         raise HTTPException(404, "Thermostat not found")
     save_config(cfg)
     _thermostats.pop(ip, None)   # so it disappears from the dashboard immediately
+    return {"ok": True}
+
+
+# ── Cielo Breez room climate (optional, cloud-polled, read-only) ─────────────
+
+class CieloConnectPayload(BaseModel):
+    api_key: str = Field(min_length=1, max_length=512)
+
+
+class CieloDevicePayload(BaseModel):
+    device_id: str = Field(min_length=1, max_length=128)
+
+
+@app.get("/api/cielo")
+def cielo_status():
+    return cielo.settings_status()
+
+
+@app.post("/api/cielo/connect")
+async def connect_cielo(payload: CieloConnectPayload):
+    try:
+        return await cielo.configure(payload.api_key)
+    except AuthenticationError:
+        raise HTTPException(400, "Cielo rejected that API key.")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except Exception:
+        log.exception("Cielo setup failed")
+        raise HTTPException(503, "Cielo could not be reached. Try again later.")
+
+
+@app.put("/api/cielo/device")
+async def select_cielo_device(payload: CieloDevicePayload):
+    try:
+        return await cielo.select_device(payload.device_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except Exception:
+        log.exception("Cielo device selection failed")
+        raise HTTPException(503, "Cielo could not be reached. Try again later.")
+
+
+@app.delete("/api/cielo")
+async def disconnect_cielo():
+    await cielo.clear()
     return {"ok": True}
 
 

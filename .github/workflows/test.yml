@@ -18,7 +18,8 @@ jobs:
         run: bash -n get-bask.sh deploy/install.sh docker-entrypoint.sh scripts/backup.sh
       - name: Python compile and data-path smoke test
         run: |
-          python -m py_compile server/app.py scanner/*.py
+          python -m py_compile server/*.py scanner/*.py
           PYTHONPATH="$PWD:$PWD/scanner" python tests/smoke.py
+          PYTHONPATH="$PWD:$PWD/scanner" python tests/test_cielo.py
       - name: Container build
         run: docker build -t bask:test .

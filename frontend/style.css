@@ -76,6 +76,25 @@ body {
 .manage-btn:active { background: var(--border); }
 .manage-btn .gear { font-size: 1.3rem; }
 
+/* Compact Cielo animal-room climate card (hidden until configured) */
+.room-climate {
+  appearance: none; color: var(--text); cursor: pointer; text-align: left;
+  grid-template-columns: auto auto; grid-template-rows: auto auto;
+  align-items: center; column-gap: 10px;
+  padding: 7px 12px; min-width: 138px; max-width: 190px;
+  background: rgba(59,130,246,0.11); border: 1px solid #2f4d80; border-radius: 12px;
+  flex-shrink: 0;
+}
+.room-climate:active { background: rgba(59,130,246,0.2); }
+.room-climate.unavailable { opacity: 0.65; border-color: var(--stale-border); }
+.rc-label { grid-column: 1 / -1; color: #8fb9ff; font-size: 0.68rem; font-weight: 800;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rc-reading { font-size: 1.15rem; line-height: 1.1; font-weight: 850; white-space: nowrap;
+  font-variant-numeric: tabular-nums; }
+.rc-reading small { color: var(--muted); font-size: 0.7rem; font-weight: 700; margin-left: 6px; }
+.rc-state { color: var(--muted); font-size: 0.68rem; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; text-align: right; }
+
 /* ── Day/night indicator ── */
 .period-badge {
   display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0;
@@ -118,6 +137,16 @@ body {
 .test-result { margin-top: 8px; font-size: 0.85rem; min-height: 1.1em; color: var(--muted); }
 .test-result.ok { color: var(--ok); }
 .test-result.bad { color: var(--danger); }
+.integration-card {
+  margin-top: 26px; padding: 18px; border-radius: 14px;
+  background: var(--surface2); border: 1px solid var(--border);
+}
+.integration-head { display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  margin-bottom: 12px; }
+.integration-card h2 { font-size: 1.1rem; }
+.integration-card p { color: var(--text); font-size: 0.9rem; line-height: 1.45; margin-top: 8px; }
+.integration-card .cloud-note { color: var(--muted); font-size: 0.78rem; }
+.field.compact { margin: 14px 0 0; }
 
 /* ntfy phone-alert setup */
 .ntfy-steps { margin: 0 0 12px; padding-left: 20px; font-size: 0.92rem; color: var(--text); }
