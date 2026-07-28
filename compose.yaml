@@ -1,0 +1,15 @@
+services:
+  bask:
+    build: .
+    container_name: bask
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      BASK_DATA_DIR: /data
+      DBUS_SYSTEM_BUS_ADDRESS: unix:path=/var/run/dbus/system_bus_socket
+    ports:
+      - "${BASK_PORT:-8080}:8080"
+    volumes:
+      - ${BASK_DATA_PATH:-./data}:/data
+      - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket:ro

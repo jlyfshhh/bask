@@ -10,10 +10,13 @@ Design notes for the Raspberry Pi:
     "add sensor" UI. This replaces the old second in-server BLE scanner.
 """
 import sqlite3
+import os
 import time
 from pathlib import Path
 
-DB_PATH = Path(__file__).parent.parent / "readings.db"
+ROOT = Path(__file__).parent.parent
+DATA_DIR = Path(os.environ.get("BASK_DATA_DIR", ROOT))
+DB_PATH = DATA_DIR / "readings.db"
 
 
 def get_conn() -> sqlite3.Connection:

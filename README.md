@@ -82,92 +82,55 @@ Already running Raspberry Pi OS with SSH? Just run:
 curl -fsSL https://raw.githubusercontent.com/jlyfshhh/bask/main/get-bask.sh | bash
 ```
 
-This downloads Bask, installs the system and Python dependencies, enables BlueZ passive scanning and mDNS, creates your `config.json`, and installs two `systemd` services that start on boot. When it finishes it prints your dashboard URL — `http://<hostname>.local:8080`. (Set the hostname to `bask` when flashing the card and that becomes **`bask.local`**.) Run the same command again any time to update.
+This installs Docker when needed, enables BlueZ passive scanning and mDNS, and
+runs Bask as a restart-safe container with its settings and history in
+`~/bask/data`. When it finishes it prints your dashboard URL —
+`http://<hostname>.local:8080`. Run the same command again any time to update;
+the persistent data directory is never replaced.
 
-### Manual install
+Already running the former systemd/virtualenv version? The installer stops the
+old services, takes a timestamped backup (including a consistent SQLite
+snapshot), migrates the settings and history, and starts the container.
 
-Prefer to set it up yourself, or running on a non-Pi Linux box? Bask needs Python 3.11+ and three packages: `bleak`, `fastapi`, and `uvicorn`.
+### Manual Docker install
+
+Prefer to set it up yourself? With Docker Engine and the Compose plugin installed:
 
 ```bash
 git clone https://github.com/jlyfshhh/bask.git
 cd bask
-cp config.example.json config.json
-pip install -r requirements.txt
+cp .env.example .env
+mkdir -p data backups
+docker compose up -d --build
 ```
 
-> **Original Pi Zero W (ARMv6) note:** some wheels won't build under pip there. Use a 64-bit Pi (Pi 4 / 3B+ / Zero 2 W / 5), or install the deps from apt instead: `sudo apt install -y python3-bleak python3-fastapi python3-uvicorn python3-dbus-fast`.
-
-**Enable reliable passive scanning (Linux/BlueZ)**, and `avahi` so the Pi is reachable by name:
+On Linux, enable BlueZ's reliable passive scanning mode once:
 
 ```bash
 sudo sed -i 's/^#*Experimental = .*/Experimental = true/' /etc/bluetooth/main.conf
 sudo systemctl restart bluetooth
-sudo usermod -aG bluetooth "$USER"   # so the scanner doesn't need root
-sudo apt install -y avahi-daemon     # so http://<hostname>.local:8080 works
-```
-
-**Run it:**
-
-```bash
-./start.sh
+sudo apt install -y avahi-daemon bluez rfkill
 ```
 
 Then open `http://<hostname>.local:8080` (or `http://<host-ip>:8080`) in any browser, and tap **⚙ Manage → Sensors → Pair by proximity** to add your sensors.
 
-### Run as a service (recommended)
-
-> The one-line installer above already does this for you. These manual steps are for the manual-install path.
-
-Two `systemd` units keep the scanner and web server running and start them on boot. Adjust the user and paths, then drop these in `/etc/systemd/system/`:
-
-```ini
-# /etc/systemd/system/bask-scanner.service
-[Unit]
-Description=Bask BLE scanner
-After=bluetooth.target network.target
-Wants=bluetooth.target
-[Service]
-User=YOUR_USER
-WorkingDirectory=/home/YOUR_USER/bask
-ExecStart=/usr/bin/python3 /home/YOUR_USER/bask/scanner/scanner.py
-Restart=always
-[Install]
-WantedBy=multi-user.target
-```
-
-```ini
-# /etc/systemd/system/bask-web.service
-[Unit]
-Description=Bask web server
-After=network.target bask-scanner.service
-[Service]
-User=YOUR_USER
-WorkingDirectory=/home/YOUR_USER/bask
-ExecStart=/usr/bin/python3 -m uvicorn server.app:app --host 0.0.0.0 --port 8080
-Restart=always
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash
-sudo systemctl enable --now bask-scanner bask-web
-```
-
-Run as a **non-root** user that's in the `bluetooth` group — Bask never needs root.
-
 ## Updating
 
-Open **⚙ Manage → Settings → Check for updates**, then tap **Update now** — Bask fetches the newest release, verifies it, and restarts itself (about a minute). **Your settings and sensor pairings are never affected** — everything you configure lives in `config.json`, which updates don't touch.
+Re-run the one-line installer. It fast-forwards the code and rebuilds the
+container while leaving `~/bask/data` untouched:
 
-Settings has a **💾 Download backup** button too — one file with all your enclosures, ranges, and settings, restorable on any Bask install. Worth keeping a copy somewhere safe.
+```bash
+curl -fsSL https://raw.githubusercontent.com/jlyfshhh/bask/main/get-bask.sh | bash
+```
 
-How the updater stays safe on an unauthenticated LAN API: it accepts no parameters — it can only move the install to the newest release tag of the repo it was cloned from, so the worst a request can do is trigger a legitimate update. It runs unprivileged, refuses to run over locally modified code, verifies the new version compiles before switching over, and rolls back automatically if anything fails. Cross-site requests can't trigger it (JSON-body requirement + same-origin policy).
-
-*(CLI alternative: re-run `get-bask.sh` over SSH — it fast-forwards one-liner installs and moves image installs to the newest release.)*
+Settings has a **💾 Download backup** button for portable configuration.
+`scripts/backup.sh` also snapshots both configuration and SQLite history.
+Ready-made image installations retain their existing in-app updater.
 
 ## Configuration
 
-Everything lives in `config.json` (created from `config.example.json`). You don't need to hand-edit it — the **Manage** screen in the UI does it all:
+Everything lives in the persistent `data/` directory (`config.json` plus
+`readings.db`). You don't need to hand-edit it — the **Manage** screen in the UI does it all:
 
 - **Sensors** — discovered Govee devices you've named.
 - **Enclosures** — a name + species + which sensor is the warm and cool side.
@@ -230,8 +193,11 @@ server/
   app.py          FastAPI: JSON API, range evaluation, serves the frontend
 frontend/         vanilla HTML/CSS/JS dashboard (+ favicon, keep-alive)
 config.example.json   copy to config.json
-get-bask.sh       one-line installer — downloads Bask, then runs deploy/install.sh
-deploy/install.sh sets up deps, BlueZ passive scanning, mDNS, and the systemd services
+Dockerfile        portable multi-architecture Bask container
+compose.yaml      service, Bluetooth D-Bus access, port, and persistent volume
+get-bask.sh       one-line installer and safe legacy migration
+deploy/install.sh installs Docker/BlueZ/mDNS and starts the container
+scripts/backup.sh consistent settings + SQLite backup
 start.sh          run scanner + web server together (local/dev)
 kiosk.sh          optional fullscreen browser launcher for a host-attached screen
 docs/SETUP.md     complete beginner's guide (hardware → flashing → install)
@@ -248,6 +214,9 @@ Bask is one of three companion projects for keepers:
 | 💧 | **[Clarity](https://github.com/jlyfshhh/clarity)** | The water — aquarium & pond tests, maintenance, and livestock |
 
 They're separate self-hosted services on purpose — one app can never take down another — but they share a design language, and Shed & Clarity link mixed habitats with stable shared IDs.
+
+Install any combination from one chooser with the
+**[Animal Room installer](https://github.com/jlyfshhh/animal-room)**.
 
 ## 🦗 Buy the animals some crickets
 

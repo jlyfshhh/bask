@@ -14,6 +14,7 @@ longer scans), so nothing competes for the Bluetooth adapter.
 import asyncio
 import json
 import logging
+import os
 import sys
 import time
 from pathlib import Path
@@ -28,7 +29,9 @@ from govee import GOVEE_COMPANY_ID, decode, is_govee
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("scanner")
 
-CONFIG_PATH = Path(__file__).parent.parent / "config.json"
+ROOT = Path(__file__).parent.parent
+DATA_DIR = Path(os.environ.get("BASK_DATA_DIR", ROOT))
+CONFIG_PATH = DATA_DIR / "config.json"
 
 FLUSH_INTERVAL = 5       # seconds between batched SD writes
 HISTORY_INTERVAL = 120   # min seconds between history samples per sensor

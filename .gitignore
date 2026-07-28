@@ -7,6 +7,8 @@ __pycache__/
 readings.db
 readings.db-shm
 readings.db-wal
+data/
+.env
 
 # Personal configuration — copy config.example.json to config.json and edit
 config.json

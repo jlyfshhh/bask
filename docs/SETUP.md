@@ -81,7 +81,9 @@ Already have a Pi running Raspberry Pi OS (with SSH)? You don't need the image �
 curl -fsSL https://raw.githubusercontent.com/jlyfshhh/bask/main/get-bask.sh | bash
 ```
 
-It downloads Bask, installs what it needs, and sets it to start automatically on boot. Run the same line again any time to update.
+It installs Docker if needed, downloads Bask, enables Bluetooth scanning, and
+sets the container to start automatically on boot. Settings and sensor history
+live separately in `~/bask/data`. Run the same line again any time to update.
 
 ---
 
@@ -100,7 +102,12 @@ Almost always a Wi‑Fi typo. Re‑flash the card (step 2) and re‑enter the Wi
 Make sure the sensors have good batteries and are within a few feet of the Pi while pairing. Give the scanner a minute to hear them. The Govee Home app can confirm a sensor is alive.
 
 **How do I update Bask later?**
-Right on the dashboard: **⚙ Manage → Settings → Check for updates → Update now**. It takes about a minute and **never touches your settings or sensor pairings**. (While you're there, tap **💾 Download backup** occasionally — one file restores everything if an SD card ever dies.)
+For the one-line Docker install, run the same installation command again. It
+rebuilds Bask without touching `~/bask/data`. Ready-made image installs can
+still use **⚙ Manage → Settings → Check for updates**. Tap **💾 Download backup**
+occasionally so your enclosure settings can be restored anywhere.
 
 **How do I see what it's doing / read logs?** *(technical users, over SSH)*
-`journalctl -u bask-scanner -f` (Bluetooth scanner) or `journalctl -u bask-web -f` (dashboard). Press `Ctrl+C` to stop watching.
+For a one-line Docker install, run `cd ~/bask && docker compose logs -f`.
+Ready-made image installs use `journalctl -u bask-scanner -f` and
+`journalctl -u bask-web -f`. Press `Ctrl+C` to stop watching.

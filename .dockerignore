@@ -1,0 +1,12 @@
+.git
+.github
+.claude
+_reference
+data
+venv
+config.json
+readings.db*
+*.bak-*
+__pycache__
+*.pyc
+.DS_Store

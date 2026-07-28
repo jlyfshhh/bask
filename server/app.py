@@ -31,8 +31,10 @@ import db  # noqa: E402
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("web")
 
-CONFIG_PATH = Path(__file__).parent.parent / "config.json"
-FRONTEND_PATH = Path(__file__).parent.parent / "frontend"
+ROOT = Path(__file__).parent.parent
+DATA_DIR = Path(os.environ.get("BASK_DATA_DIR", ROOT))
+CONFIG_PATH = DATA_DIR / "config.json"
+FRONTEND_PATH = ROOT / "frontend"
 
 
 def load_config() -> dict:
@@ -187,6 +189,20 @@ async def lifespan(app: FastAPI):
 # and cross-origin JSON writes fail their preflight — important because the API
 # is unauthenticated and meant only for a trusted local network.
 app = FastAPI(lifespan=lifespan)
+
+
+# ── Service health ───────────────────────────────────────────────────────────
+
+@app.get("/api/health")
+def health():
+    """Small dependency-free probe used by Docker and installers."""
+    try:
+        db.init_db()
+        load_config()
+    except Exception as exc:
+        log.warning("health check failed: %s", exc)
+        raise HTTPException(503, "Bask data is unavailable")
+    return {"ok": True}
 
 
 # ── Dashboard ────────────────────────────────────────────────────────────────
@@ -904,7 +920,6 @@ def import_config(payload: dict = Body()):
 #     code, and rolls back to the previous commit if anything fails.
 # config.json and readings.db are untracked, so updates never touch user data.
 
-ROOT = Path(__file__).parent.parent
 _update_state = {"state": "idle", "error": None, "from": None, "to": None}
 _update_lock = threading.Lock()
 
