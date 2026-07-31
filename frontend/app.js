@@ -854,20 +854,31 @@ function renderCieloSettings() {
     </div>`;
   }
   const unit = _cielo.temp_unit === "C" ? "°C" : "°F";
-  const deviceOptions = (_cielo.devices || []).map(d =>
+  const devices = _cielo.devices || [];
+  const noDevices = devices.length === 0;
+  const deviceOptions = devices.map(d =>
     `<option value="${esc(d.id)}" ${d.id === _cielo.selected_device_id ? "selected" : ""}>${esc(d.name)}</option>`).join("");
-  const reading = _cielo.temperature == null ? "Waiting for first update…" :
-    `${_cielo.temperature}${unit} · ${_cielo.humidity ?? "—"}% · ${_cielo.power ? esc(_cielo.mode || "on") : "off"}`;
+  // Distinguish "connected but Cielo lists no controller" (e.g. the device was
+  // unlinked, or the key is from another account) from a genuine first-poll wait.
+  const reading = _cielo.temperature != null
+    ? `${_cielo.temperature}${unit} · ${_cielo.humidity ?? "—"}% · ${_cielo.power ? esc(_cielo.mode || "on") : "off"}`
+    : (noDevices ? "No controller found on this Cielo account" : "Waiting for first update…");
+  const statusBad = _cielo.error || _cielo.online === false || noDevices;
+  const note = _cielo.error
+    ? _cielo.error
+    : (noDevices
+      ? "Bask connected, but Cielo reports no controllers for this account. If your Breez Max was unlinked or is on a different Cielo login, add it back to this account — Bask re-checks about every 2 minutes and it will appear here automatically."
+      : "Read-only Cielo cloud connection · updates about every 2 minutes");
   return `<div class="integration-card">
     <div class="integration-head"><div><h2>Animal room climate</h2>
-      <div class="row-sub"><span class="tdot ${_cielo.error || _cielo.online === false ? "bad" : "ok"}"></span>
+      <div class="row-sub"><span class="tdot ${statusBad ? "bad" : "ok"}"></span>
         ${esc(_cielo.name || "Cielo Breez Max")}</div></div>
       <button class="btn danger sm" onclick="disconnectCielo()">Disconnect</button></div>
     <p>${reading}</p>
-    ${(_cielo.devices || []).length > 1 ? `<div class="field compact"><label>Controller</label>
+    ${devices.length > 1 ? `<div class="field compact"><label>Controller</label>
       <select id="cielo-device" onchange="selectCieloDevice(this.value)">
         <option value="">Choose a controller…</option>${deviceOptions}</select></div>` : ""}
-    <p class="cloud-note">${esc(_cielo.error || "Read-only Cielo cloud connection · updates about every 2 minutes")}</p>
+    <p class="cloud-note">${esc(note)}</p>
   </div>`;
 }
 
