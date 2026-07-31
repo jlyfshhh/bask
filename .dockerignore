@@ -3,6 +3,7 @@
 .claude
 _reference
 data
+backups
 venv
 config.json
 cielo-secrets.json

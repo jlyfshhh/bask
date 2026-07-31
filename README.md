@@ -124,8 +124,9 @@ container while leaving `~/bask/data` untouched:
 curl -fsSL https://raw.githubusercontent.com/jlyfshhh/bask/main/get-bask.sh | bash
 ```
 
-Settings has a **💾 Download backup** button for portable configuration.
-`scripts/backup.sh` also snapshots both configuration and SQLite history.
+Settings has a **💾 Download backup** button for portable, secret-free
+configuration. `scripts/backup.sh` creates a private filesystem backup of
+configuration, SQLite history, and configured Cielo credentials.
 Ready-made image installations retain their existing in-app updater.
 
 ## Configuration
@@ -155,7 +156,7 @@ Bask can also show a compact, read-only room-climate card from a Cielo Breez Max
 
 Cielo permits an API key to be used only once and currently limits generation to three keys per month. Bask therefore saves the resulting access token and reuses it across restarts. Generate a fresh key, submit it once, and do not revoke it while Bask is using it. The integration polls Cielo's cloud about every two minutes, so it requires internet access; an outage only marks the card stale and never affects enclosure sensor monitoring.
 
-The integration is deliberately **status-only**: Bask cannot turn the mini-split on/off or change its mode or setpoint. The API key and token are stored in `cielo-secrets.json` inside Bask's private data directory with owner-only file permissions. They are excluded from Git, Docker build context, portable config exports, and Bask's portable backup archive. Preserve the full private data directory when migrating the server, or disconnect and generate a new key afterward.
+The integration is deliberately **status-only**: Bask cannot turn the mini-split on/off or change its mode or setpoint. The API key and token are stored in `cielo-secrets.json` inside Bask's private data directory with owner-only file permissions. They are excluded from Git, Docker build context, and portable Manage-page exports. The private `scripts/backup.sh` filesystem archive includes them with owner-only permissions so a full server restore can preserve the integration; protect that archive like any other credential backup.
 
 See Cielo's [Breez Max integration instructions](https://support.cielowigle.com/hc/en-us/articles/40965394269079-How-to-integrate-Home-Assistant-with-Breez-Max) for where to generate a Cielo Connect key.
 

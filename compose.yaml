@@ -3,6 +3,11 @@ services:
     build: .
     container_name: bask
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     env_file:
       - .env
     environment:

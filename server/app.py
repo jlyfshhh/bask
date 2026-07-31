@@ -130,9 +130,22 @@ _thermostats: dict[str, dict] = {}   # ip -> parsed status
 
 
 def _fetch_herpstat(ip: str) -> dict:
-    req = urllib.request.Request(f"http://{ip}/RAWSTATUS", headers={"User-Agent": "bask"})
-    with urllib.request.urlopen(req, timeout=HERPSTAT_TIMEOUT) as r:
-        return json.loads(r.read().decode())
+    # Some SpyderWeb units occasionally return a partially-updated JSON document
+    # while their status page is being regenerated. One short retry prevents a
+    # healthy thermostat from flashing offline without hiding persistent failures.
+    last_error: json.JSONDecodeError | None = None
+    for attempt in range(2):
+        req = urllib.request.Request(f"http://{ip}/RAWSTATUS", headers={"User-Agent": "bask"})
+        with urllib.request.urlopen(req, timeout=HERPSTAT_TIMEOUT) as response:
+            raw = response.read().decode()
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError as error:
+            last_error = error
+            if attempt == 0:
+                time.sleep(0.15)
+    assert last_error is not None
+    raise last_error
 
 
 def _parse_herpstat(ip: str, raw: dict, name_override) -> dict:
