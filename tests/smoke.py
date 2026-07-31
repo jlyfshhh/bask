@@ -15,12 +15,15 @@ def main() -> None:
         os.environ["BASK_DATA_DIR"] = str(data)
 
         from scanner import db
-        from server.app import dashboard, health
+        from server.app import dashboard, health, room_dashboard
 
         assert db.DB_PATH == data / "readings.db"
         assert health() == {"ok": True}
         result = dashboard()
         assert result["enclosures"]
+        room = room_dashboard()
+        assert room["bask"]["enclosures"]
+        assert room["shed"]["configured"] is False
         assert json.loads((data / "config.json").read_text())["enclosures"]
         assert (data / "readings.db").is_file()
 

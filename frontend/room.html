@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#07110e">
+  <title>Animal Room</title>
+  <link rel="icon" href="/favicon.svg">
+  <link rel="stylesheet" href="/room.css">
+</head>
+<body>
+  <main class="room-shell">
+    <header class="room-header">
+      <div>
+        <p class="eyebrow">ANIMAL ROOM</p>
+        <h1 id="greeting">Good morning.</h1>
+        <p id="summary" class="summary">Connecting to Bask and Shed…</p>
+      </div>
+      <div class="header-right">
+        <div id="connection" class="connection"><span></span> Live</div>
+        <time id="clock">--:--</time>
+        <p id="date">---</p>
+      </div>
+    </header>
+
+    <section class="dashboard-grid">
+      <section class="panel bask-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">BASK</p>
+            <h2>Enclosure climate</h2>
+          </div>
+          <div id="bask-counts" class="metric-row"></div>
+        </div>
+        <div id="enclosures" class="enclosure-grid">
+          <div class="empty">Waiting for sensor data…</div>
+        </div>
+      </section>
+
+      <section class="panel shed-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">SHED</p>
+            <h2>Today’s care</h2>
+          </div>
+          <div id="task-ring" class="task-ring"><strong>—</strong><span>done</span></div>
+        </div>
+        <div class="progress-track"><span id="task-progress"></span></div>
+        <div id="task-metrics" class="task-metrics"></div>
+        <div id="task-list" class="task-list">
+          <div class="empty">Connecting to Shed…</div>
+        </div>
+      </section>
+    </section>
+
+    <footer class="ticker" aria-live="polite">
+      <div class="ticker-label"><span></span> ROOM STATUS</div>
+      <div class="ticker-window">
+        <div id="ticker-track" class="ticker-track">
+          <span>Loading the latest animal room update…</span>
+        </div>
+      </div>
+      <div id="last-updated" class="last-updated">Updating…</div>
+    </footer>
+  </main>
+  <script src="/room.js"></script>
+</body>
+</html>

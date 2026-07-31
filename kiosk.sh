@@ -6,13 +6,13 @@
 # Wire this into autostart (e.g. ~/.config/wayfire.ini, ~/.xinitrc, or a
 # systemd --user service) after the web service is up.
 set -u
-URL="http://localhost:8080"
+URL="http://localhost:8080/room.html"
 
 # Wait for the web server to answer before opening the browser. cog does NOT
 # auto-retry a failed load, and uvicorn's cold start on a Pi Zero W is ~30-40s,
 # so we wait generously (up to 2 min) for it to come up before launching.
 for _ in $(seq 1 120); do
-  if curl -sf "$URL/api/dashboard" >/dev/null 2>&1; then break; fi
+  if curl -sf "http://localhost:8080/api/room-dashboard" >/dev/null 2>&1; then break; fi
   sleep 1
 done
 
@@ -42,6 +42,10 @@ else
 fi
 
 exec "$BROWSER" \
+  --ozone-platform=wayland \
+  --password-store=basic \
+  --no-first-run \
+  --disable-sync \
   --kiosk \
   --app="$URL" \
   --noerrdialogs \

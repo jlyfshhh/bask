@@ -37,6 +37,16 @@ DATA_DIR = Path(os.environ.get("BASK_DATA_DIR", ROOT))
 CONFIG_PATH = DATA_DIR / "config.json"
 FRONTEND_PATH = ROOT / "frontend"
 cielo = CieloMonitor(DATA_DIR / "cielo-secrets.json")
+SHED_DISPLAY_URL = os.environ.get("SHED_DISPLAY_URL", "").strip()
+SHED_DISPLAY_TOKEN = os.environ.get("SHED_DISPLAY_TOKEN", "").strip()
+SHED_POLL = 15
+_shed_display: dict = {
+    "configured": bool(SHED_DISPLAY_URL and SHED_DISPLAY_TOKEN),
+    "available": False,
+    "data": None,
+    "last_success": None,
+    "error": None,
+}
 
 
 def load_config() -> dict:
@@ -175,16 +185,49 @@ async def _herpstat_loop():
         await asyncio.sleep(HERPSTAT_POLL)
 
 
+def _fetch_shed_display() -> dict:
+    request = urllib.request.Request(
+        SHED_DISPLAY_URL,
+        headers={
+            "User-Agent": "bask-room-display",
+            "X-Shed-Display-Token": SHED_DISPLAY_TOKEN,
+        },
+    )
+    with urllib.request.urlopen(request, timeout=8) as response:
+        return json.loads(response.read().decode())
+
+
+async def _shed_display_loop():
+    if not _shed_display["configured"]:
+        return
+    while True:
+        try:
+            payload = await asyncio.to_thread(_fetch_shed_display)
+            _shed_display.update({
+                "available": True,
+                "data": payload,
+                "last_success": int(time.time()),
+                "error": None,
+            })
+        except Exception as exc:
+            _shed_display["available"] = False
+            _shed_display["error"] = "Shed is temporarily unavailable"
+            log.warning("Shed display feed unavailable: %s", exc)
+        await asyncio.sleep(SHED_POLL)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()
     poller = asyncio.create_task(_herpstat_loop())
     cielo_poller = asyncio.create_task(cielo.loop())
     notifier = asyncio.create_task(_notify_loop())
+    shed_poller = asyncio.create_task(_shed_display_loop())
     yield
     poller.cancel()
     cielo_poller.cancel()
     notifier.cancel()
+    shed_poller.cancel()
 
 
 # No CORS middleware on purpose. The dashboard is served from the SAME origin as
@@ -341,6 +384,16 @@ def _build_dashboard(cfg):
 @app.get("/api/dashboard")
 def dashboard():
     return _build_dashboard(load_config())
+
+
+@app.get("/api/room-dashboard")
+def room_dashboard():
+    """Combined, read-only feed for the attached animal-room display."""
+    return {
+        "generated_at": int(time.time()),
+        "bask": _build_dashboard(load_config()),
+        "shed": _shed_display.copy(),
+    }
 
 
 # ── Discovery (reads the scanner's table; no BLE here) ───────────────────────
