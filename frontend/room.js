@@ -78,14 +78,25 @@ function renderShed(shed) {
   ];
   const visible = combined.slice(0, 9);
   $("#task-list").innerHTML = visible.length
-    ? visible.map((task) => `<article class="task-item ${task.overdue ? "overdue" : ""}">
-        <span class="bar"></span>
-        <div class="task-copy">
-          <h3>${escapeHtml(task.title)}</h3>
-          <p>${escapeHtml(task.overdue ? `Overdue · ${task.dueDate}` : task.taskType)}</p>
-        </div>
-        <span class="task-animal">${escapeHtml(task.animalName)}</span>
-      </article>`).join("") + (combined.length > visible.length
+    ? visible.map((task) => {
+        // Lead with the animal (like Shed's own list) so the panel doesn't read as a
+        // stack of identical task titles; show the specific task + guidance beneath.
+        const title = (task.title || "").trim();
+        const detail = (task.details || "").trim();
+        const lower = (value) => value.toLowerCase();
+        const sub = title && detail && !lower(detail).includes(lower(title)) && !lower(title).includes(lower(detail))
+          ? `${title} · ${detail}`
+          : (detail || title || task.taskType || "");
+        const right = task.overdue ? `overdue · ${task.dueDate}` : (task.species || "");
+        return `<article class="task-item ${task.overdue ? "overdue" : ""}">
+          <span class="bar"></span>
+          <div class="task-copy">
+            <h3>${escapeHtml(task.animalName)}</h3>
+            <p>${escapeHtml(sub)}</p>
+          </div>
+          <span class="task-animal">${escapeHtml(right)}</span>
+        </article>`;
+      }).join("") + (combined.length > visible.length
         ? `<div class="more-tasks">+ ${combined.length - visible.length} more in Shed</div>` : "")
     : `<div class="empty">Everything scheduled for today is complete.</div>`;
 }
