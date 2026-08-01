@@ -31,16 +31,14 @@ body {
     linear-gradient(160deg, #071511 0%, #050b09 66%);
 }
 
-/* Sizes are tuned to the 3440x1440 kiosk: the clamp() max on every value equals
-   the target size, and the middle vh/vw term matches it at 1440px tall so the
-   kiosk renders pixel-identical. On any smaller/shorter screen (a phone or
-   laptop glancing at /room.html) the same values scale down together instead of
-   overlapping. */
+/* Sized for the 3440x1440 animal-room wall display — large, readable across the
+   room. Every value is a clamp() so it also scales down cleanly on a phone or
+   laptop glancing at /room.html instead of overflowing. */
 
 .room-shell {
   height: 100vh;
   display: grid;
-  grid-template-rows: clamp(96px, 13.1vh, 190px) minmax(0, 1fr) clamp(52px, 6.5vh, 94px);
+  grid-template-rows: clamp(102px, 14vh, 202px) minmax(0, 1fr) clamp(56px, 7vh, 102px);
   gap: clamp(12px, 1.5vh, 22px);
   padding: clamp(18px, 2.4vh, 34px) clamp(20px, 2.4vw, 42px) clamp(16px, 1.8vh, 26px);
 }
@@ -55,27 +53,27 @@ body {
 .eyebrow {
   margin: 0 0 8px;
   color: var(--green);
-  font-size: clamp(13px, 1.3vh, 19px);
+  font-size: clamp(14px, 1.5vh, 22px);
   font-weight: 800;
   letter-spacing: .2em;
 }
 
 h1, h2, p { margin-top: 0; }
-h1 { margin-bottom: 10px; font-size: clamp(30px, 3.8vh, 55px); letter-spacing: -.045em; line-height: 1; }
-h2 { margin-bottom: 0; font-size: clamp(22px, 2.36vh, 34px); letter-spacing: -.035em; }
-.summary { margin: 0; color: #c5d1c7; font-size: clamp(16px, 1.74vh, 25px); }
+h1 { margin-bottom: 10px; font-size: clamp(34px, 4.5vh, 66px); letter-spacing: -.045em; line-height: 1; }
+h2 { margin-bottom: 0; font-size: clamp(25px, 2.75vh, 40px); letter-spacing: -.035em; }
+.summary { margin: 0; color: #c5d1c7; font-size: clamp(18px, 2.05vh, 30px); }
 
 .header-right { text-align: right; min-width: 300px; }
-#clock { display: block; font-size: clamp(34px, 4.45vh, 64px); font-weight: 750; letter-spacing: -.045em; line-height: .95; }
-#date { margin: 10px 0 0; color: var(--muted); font-size: clamp(15px, 1.4vh, 20px); }
-.connection { margin-bottom: 13px; color: var(--muted); font-size: clamp(13px, 1.18vh, 17px); font-weight: 700; text-transform: uppercase; letter-spacing: .12em; }
-.connection span { display: inline-block; width: 11px; height: 11px; margin-right: 9px; border-radius: 50%; background: var(--green); box-shadow: 0 0 18px var(--green); }
+#clock { display: block; font-size: clamp(40px, 5.3vh, 78px); font-weight: 750; letter-spacing: -.045em; line-height: .95; }
+#date { margin: 10px 0 0; color: var(--muted); font-size: clamp(16px, 1.6vh, 24px); }
+.connection { margin-bottom: 13px; color: var(--muted); font-size: clamp(14px, 1.3vh, 19px); font-weight: 700; text-transform: uppercase; letter-spacing: .12em; }
+.connection span { display: inline-block; width: 12px; height: 12px; margin-right: 9px; border-radius: 50%; background: var(--green); box-shadow: 0 0 18px var(--green); }
 .connection.offline span { background: var(--red); box-shadow: 0 0 18px var(--red); }
 
 .dashboard-grid {
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 2.15fr) minmax(clamp(360px, 30vw, 760px), 1fr);
+  grid-template-columns: minmax(0, 2.15fr) minmax(clamp(360px, 30vw, 780px), 1fr);
   gap: clamp(12px, 1.5vw, 22px);
 }
 
@@ -92,7 +90,7 @@ h2 { margin-bottom: 0; font-size: clamp(22px, 2.36vh, 34px); letter-spacing: -.0
 
 .panel-heading {
   flex: 0 0 auto;
-  min-height: clamp(84px, 8.2vh, 118px);
+  min-height: clamp(88px, 8.7vh, 128px);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -103,15 +101,15 @@ h2 { margin-bottom: 0; font-size: clamp(22px, 2.36vh, 34px); letter-spacing: -.0
 
 .metric-row { display: flex; gap: 12px; }
 .metric {
-  min-width: clamp(72px, 6vw, 96px);
-  padding: clamp(7px, .95vh, 10px) clamp(11px, .9vw, 15px);
+  min-width: clamp(78px, 6.4vw, 104px);
+  padding: clamp(7px, .95vh, 11px) clamp(11px, .9vw, 16px);
   border: 1px solid var(--line);
   border-radius: 14px;
   background: rgba(255, 255, 255, .025);
   text-align: center;
 }
-.metric strong { display: block; font-size: clamp(19px, 1.87vh, 27px); line-height: 1; }
-.metric span { display: block; margin-top: 6px; color: var(--muted); font-size: clamp(11px, .9vh, 13px); text-transform: uppercase; letter-spacing: .08em; }
+.metric strong { display: block; font-size: clamp(22px, 2.2vh, 32px); line-height: 1; }
+.metric span { display: block; margin-top: 6px; color: var(--muted); font-size: clamp(12px, 1vh, 15px); text-transform: uppercase; letter-spacing: .08em; }
 .metric.good strong { color: var(--green); }
 .metric.attention strong { color: var(--amber); }
 .metric.offline strong { color: var(--muted); }
@@ -130,9 +128,9 @@ h2 { margin-bottom: 0; font-size: clamp(22px, 2.36vh, 34px); letter-spacing: -.0
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  padding: clamp(11px, 1.46vh, 21px) clamp(13px, 1.2vw, 23px);
+  padding: clamp(11px, 1.4vh, 20px) clamp(13px, 1.2vw, 22px);
   border: 1px solid var(--line);
-  border-left: 5px solid var(--muted);
+  border-left: 6px solid var(--muted);
   border-radius: 17px;
   background: rgba(255, 255, 255, .025);
   display: flex;
@@ -145,65 +143,65 @@ h2 { margin-bottom: 0; font-size: clamp(22px, 2.36vh, 34px); letter-spacing: -.0
 .enclosure.danger { border-left-color: var(--red); background: rgba(150, 49, 43, .1); }
 .enclosure.stale, .enclosure.no_data { border-left-color: #647168; opacity: .78; }
 .enc-head { display: flex; justify-content: space-between; gap: 10px; }
-.enc-head h3 { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: clamp(18px, 2.15vh, 31px); letter-spacing: -.035em; line-height: 1; }
-.status-dot { flex: 0 0 auto; width: clamp(12px, 1.18vh, 17px); height: clamp(12px, 1.18vh, 17px); margin-top: 3px; border-radius: 50%; background: #647168; }
+.enc-head h3 { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: clamp(21px, 2.5vh, 37px); letter-spacing: -.035em; line-height: 1; }
+.status-dot { flex: 0 0 auto; width: clamp(13px, 1.3vh, 19px); height: clamp(13px, 1.3vh, 19px); margin-top: 3px; border-radius: 50%; background: #647168; }
 .ok .status-dot { background: var(--green); box-shadow: 0 0 12px rgba(131, 212, 158, .55); }
 .warning .status-dot { background: var(--amber); }
 .danger .status-dot { background: var(--red); }
-.species { margin: 6px 0 0; overflow: hidden; color: #aebdb2; font-size: clamp(12px, 1.18vh, 17px); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.species { margin: 6px 0 0; overflow: hidden; color: #aebdb2; font-size: clamp(14px, 1.4vh, 20px); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .readings { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .reading { min-width: 0; }
-.reading strong { display: block; font-size: clamp(22px, 2.64vh, 38px); font-weight: 780; letter-spacing: -.04em; line-height: 1; }
-.reading span { display: block; margin-top: clamp(4px, .55vh, 8px); color: #aebdb2; font-size: clamp(11px, 1.04vh, 15px); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.reading strong { display: block; font-size: clamp(26px, 3.1vh, 46px); font-weight: 780; letter-spacing: -.04em; line-height: 1; }
+.reading span { display: block; margin-top: clamp(4px, .55vh, 8px); color: #aebdb2; font-size: clamp(12px, 1.2vh, 17px); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .reading.bad strong { color: var(--amber); }
 .reading.missing strong { color: #66736b; }
 
 .task-ring {
-  width: clamp(64px, 8vh, 82px);
-  height: clamp(64px, 8vh, 82px);
+  width: clamp(70px, 8.8vh, 94px);
+  height: clamp(70px, 8.8vh, 94px);
   display: grid;
   place-content: center;
   border: 7px solid rgba(131, 212, 158, .18);
   border-radius: 50%;
   text-align: center;
 }
-.task-ring strong { display: block; font-size: clamp(20px, 1.87vh, 27px); line-height: .9; }
-.task-ring span { margin-top: 5px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .1em; }
-.progress-track { flex: 0 0 auto; height: 7px; background: rgba(255,255,255,.045); }
+.task-ring strong { display: block; font-size: clamp(23px, 2.2vh, 32px); line-height: .9; }
+.task-ring span { margin-top: 5px; color: var(--muted); font-size: clamp(11px, 1vh, 13px); text-transform: uppercase; letter-spacing: .1em; }
+.progress-track { flex: 0 0 auto; height: 8px; background: rgba(255,255,255,.045); }
 .progress-track span { display: block; width: 0; height: 100%; background: linear-gradient(90deg, #5ebf83, #9ee5b2); transition: width .5s ease; }
-.task-metrics { flex: 0 0 auto; min-height: clamp(64px, 8.3vh, 84px); display: grid; grid-template-columns: repeat(3, 1fr); border-bottom: 1px solid var(--line); }
+.task-metrics { flex: 0 0 auto; min-height: clamp(72px, 9.2vh, 96px); display: grid; grid-template-columns: repeat(3, 1fr); border-bottom: 1px solid var(--line); }
 .task-metric { display: grid; place-content: center; text-align: center; border-right: 1px solid var(--line); }
 .task-metric:last-child { border-right: 0; }
-.task-metric strong { font-size: clamp(21px, 2.05vh, 28px); line-height: 1; }
-.task-metric span { margin-top: 7px; color: var(--muted); font-size: clamp(11px, 1.05vh, 13px); text-transform: uppercase; letter-spacing: .1em; }
+.task-metric strong { font-size: clamp(24px, 2.4vh, 34px); line-height: 1; }
+.task-metric span { margin-top: 7px; color: var(--muted); font-size: clamp(12px, 1.15vh, 15px); text-transform: uppercase; letter-spacing: .1em; }
 .task-metric.overdue strong { color: var(--red); }
-.task-list { flex: 1; min-height: 0; overflow: hidden; padding: 10px 19px 18px; }
-.task-item { display: grid; grid-template-columns: 10px 1fr auto; gap: 14px; align-items: center; min-height: clamp(52px, 5.4vh, 70px); padding: 11px 10px; border-bottom: 1px solid var(--line); }
-.task-item .bar { width: 6px; height: 42px; border-radius: 5px; background: var(--green); }
+.task-list { flex: 1; min-height: 0; overflow: hidden; padding: 12px 22px 18px; }
+.task-item { display: grid; grid-template-columns: 12px 1fr auto; gap: 16px; align-items: center; min-height: clamp(58px, 6vh, 82px); padding: 12px 10px; border-bottom: 1px solid var(--line); }
+.task-item .bar { width: 7px; height: 48px; border-radius: 5px; background: var(--green); }
 .task-item.overdue .bar { background: var(--red); }
 .task-copy { min-width: 0; }
-.task-copy h3 { margin: 0 0 4px; overflow: hidden; font-size: clamp(16px, 1.5vh, 20px); text-overflow: ellipsis; white-space: nowrap; }
-.task-copy p { margin: 0; overflow: hidden; color: var(--muted); font-size: clamp(13px, 1.1vh, 15px); text-overflow: ellipsis; white-space: nowrap; }
-.task-animal { max-width: 220px; overflow: hidden; color: #d3ddd5; font-size: clamp(14px, 1.15vh, 16px); font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
-.more-tasks { padding: 17px; color: var(--muted); font-size: 16px; text-align: center; }
+.task-copy h3 { margin: 0 0 5px; overflow: hidden; font-size: clamp(20px, 2vh, 27px); text-overflow: ellipsis; white-space: nowrap; }
+.task-copy p { margin: 0; overflow: hidden; color: var(--muted); font-size: clamp(15px, 1.4vh, 19px); text-overflow: ellipsis; white-space: nowrap; }
+.task-animal { max-width: 260px; overflow: hidden; color: #d3ddd5; font-size: clamp(16px, 1.45vh, 20px); font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.more-tasks { padding: 18px; color: var(--muted); font-size: clamp(15px, 1.35vh, 19px); text-align: center; }
 
-.empty { height: 100%; display: grid; place-items: center; padding: 30px; color: #b8c6bc; font-size: clamp(20px, 2.9vh, 30px); font-weight: 650; line-height: 1.35; text-align: center; }
+.empty { height: 100%; display: grid; place-items: center; padding: 30px; color: #b8c6bc; font-size: clamp(24px, 3.4vh, 36px); font-weight: 650; line-height: 1.35; text-align: center; }
 
 .ticker {
   display: grid;
-  grid-template-columns: clamp(170px, 14.5vw, 250px) minmax(0, 1fr) clamp(150px, 13.4vw, 230px);
+  grid-template-columns: clamp(180px, 15vw, 262px) minmax(0, 1fr) clamp(160px, 13.4vw, 236px);
   align-items: center;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 18px;
   background: rgba(10, 25, 20, .96);
 }
-.ticker-label { height: 100%; display: flex; align-items: center; padding-left: clamp(16px, 1.6vw, 28px); border-right: 1px solid var(--line); color: var(--green); font-size: clamp(13px, 1.1vw, 16px); font-weight: 800; letter-spacing: .13em; }
-.ticker-label span { width: 10px; height: 10px; margin-right: 12px; border-radius: 50%; background: var(--green); box-shadow: 0 0 14px var(--green); }
+.ticker-label { height: 100%; display: flex; align-items: center; padding-left: clamp(16px, 1.6vw, 28px); border-right: 1px solid var(--line); color: var(--green); font-size: clamp(14px, 1.2vw, 18px); font-weight: 800; letter-spacing: .13em; }
+.ticker-label span { width: 11px; height: 11px; margin-right: 12px; border-radius: 50%; background: var(--green); box-shadow: 0 0 14px var(--green); }
 .ticker-window { overflow: hidden; white-space: nowrap; }
-.ticker-track { display: inline-flex; gap: 55px; padding-left: 100%; font-size: clamp(17px, 1.6vw, 24px); animation: ticker-scroll 42s linear infinite; }
-.ticker-track span::after { content: "◆"; margin-left: 55px; color: var(--green); font-size: 11px; vertical-align: 3px; }
-.last-updated { height: 100%; display: grid; place-items: center; border-left: 1px solid var(--line); color: var(--muted); font-size: clamp(12px, 1vw, 15px); }
+.ticker-track { display: inline-flex; gap: 60px; padding-left: 100%; font-size: clamp(20px, 1.95vw, 31px); animation: ticker-scroll 46s linear infinite; }
+.ticker-track span::after { content: "◆"; margin-left: 60px; color: var(--green); font-size: 13px; vertical-align: 3px; }
+.last-updated { height: 100%; display: grid; place-items: center; border-left: 1px solid var(--line); color: var(--muted); font-size: clamp(13px, 1.05vw, 17px); }
 
 @keyframes ticker-scroll {
   from { transform: translateX(0); }

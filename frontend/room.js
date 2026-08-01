@@ -101,37 +101,109 @@ function renderShed(shed) {
     : `<div class="empty">Everything scheduled for today is complete.</div>`;
 }
 
+function listNames(names) {
+  const unique = [...new Set(names.filter(Boolean))];
+  if (!unique.length) return "";
+  if (unique.length === 1) return unique[0];
+  if (unique.length === 2) return `${unique[0]} and ${unique[1]}`;
+  if (unique.length <= 4) return `${unique.slice(0, -1).join(", ")}, and ${unique.at(-1)}`;
+  return `${unique.slice(0, 3).join(", ")}, and ${unique.length - 3} more`;
+}
+
+// Rotate flavor lines slowly (~20 min buckets) so the ticker text stays put long
+// enough to scroll all the way through instead of flickering every refresh.
+function rotate(options) {
+  return options[Math.floor(Date.now() / 1200000) % options.length];
+}
+
+const lowerFirst = (value) => (value ? value.charAt(0).toLowerCase() + value.slice(1) : value);
+
 function buildMessages(data) {
-  const bask = data.bask;
+  const bask = data.bask || {};
+  const enclosures = bask.enclosures || [];
   const counts = bask.counts || {};
   const messages = [];
-  const trouble = (counts.warning || 0) + (counts.danger || 0);
-  const waiting = (counts.stale || 0) + (counts.no_data || 0);
+  const hour = new Date().getHours();
 
-  if (!trouble && !waiting) {
-    messages.push("All monitored enclosures are currently green.");
+  const attention = enclosures.filter((enc) => enc.status === "warning" || enc.status === "danger");
+  const waiting = enclosures.filter((enc) => enc.status === "stale" || enc.status === "no_data");
+  const okCount = counts.ok || 0;
+
+  // ── How the room's feeling ──
+  if (!attention.length && !waiting.length && okCount) {
+    messages.push(rotate([
+      `Everything's cozy — all ${okCount} enclosures are right where they should be. 🌿`,
+      `The whole room's dialed in. Every habitat is sitting in its happy range.`,
+      `All green in here. Temps and humidity are on point across the board.`,
+      `Nothing to fuss over — every enclosure is comfortable right now.`,
+    ]));
   } else {
-    if (trouble) messages.push(`${trouble} enclosure${trouble === 1 ? "" : "s"} need climate attention.`);
-    if (waiting) messages.push(`${waiting} enclosure${waiting === 1 ? "" : "s"} are waiting for fresh sensor data.`);
+    if (attention.length) {
+      const names = listNames(attention.map((enc) => enc.name));
+      messages.push(attention.length === 1
+        ? `${names}'s enclosure could use a peek — it's drifted out of range.`
+        : `A few want a look: ${names} have wandered out of range.`);
+    }
+    if (waiting.length) {
+      const names = listNames(waiting.map((enc) => enc.name));
+      messages.push(waiting.length === 1
+        ? `Still waiting to hear from ${names}'s sensor.`
+        : `Waiting on fresh readings from ${names}.`);
+    }
+    if (okCount) messages.push(`The other ${okCount} are sitting pretty. 🌿`);
   }
-  if (counts.danger) messages.push(`${counts.danger} enclosure${counts.danger === 1 ? "" : "s"} have multiple readings outside their target range.`);
 
+  // ── Care, in plain language ──
   const shed = data.shed?.data;
   if (shed) {
     const { remaining, overdue, completed, total } = shed.summary;
-    messages.push(remaining ? `${remaining} care task${remaining === 1 ? "" : "s"} remain today.` : "Today’s scheduled care is complete.");
-    if (overdue) messages.push(`${overdue} earlier task${overdue === 1 ? "" : "s"} still need attention.`);
-    if (total) messages.push(`${completed} of ${total} scheduled tasks have been completed today.`);
-    const feeding = shed.tasks.filter((task) => /feed|salad|insect|cgd|smoothie/i.test(`${task.taskType} ${task.title}`)).length;
-    if (feeding) messages.push(`${feeding} feeding task${feeding === 1 ? "" : "s"} are still on today’s list.`);
+    const tasks = shed.tasks || [];
+    const overdueTasks = shed.overdue || [];
+
+    if (!remaining && !overdue) {
+      messages.push(rotate([
+        `Every bit of today's care is done — nicely handled. 🎉`,
+        `Today's list is all checked off. The critters are set.`,
+        `Care's all caught up. Everybody's been looked after today.`,
+      ]));
+    } else {
+      if (remaining) {
+        const next = tasks[0];
+        messages.push(next
+          ? `${remaining} to go today — next up is ${lowerFirst(next.title)} for ${next.animalName}.`
+          : `${remaining} more ${remaining === 1 ? "thing" : "things"} on today's care list.`);
+      }
+      if (overdue) {
+        const who = listNames(overdueTasks.map((task) => task.animalName));
+        messages.push(who
+          ? `Don't forget ${who} from earlier — still waiting on you.`
+          : `${overdue} ${overdue === 1 ? "task is" : "tasks are"} carried over from earlier.`);
+      }
+    }
+    if (total && completed) messages.push(`${completed} of ${total} knocked out so far today.`);
+
+    const hungry = listNames(tasks
+      .filter((task) => /feed|salad|insect|cgd|smoothie|rat|mouse|dubia|worm/i.test(`${task.taskType} ${task.title}`))
+      .map((task) => task.animalName));
+    if (hungry) messages.push(`Still owe dinner to ${hungry}.`);
   } else if (data.shed?.configured) {
-    messages.push("Shed is offline; Bask sensor monitoring is still working.");
+    messages.push(`Shed's catching its breath — the sensors are still keeping watch, though.`);
   }
 
-  if (bask.room_climate?.configured && bask.room_climate?.available) {
-    const room = bask.room_climate;
-    messages.push(`Room climate is ${Math.round(room.temperature)}° with ${Math.round(room.humidity)}% humidity.`);
+  // ── The room itself (Cielo, when connected) ──
+  const climate = bask.room_climate;
+  if (climate?.configured && climate?.available && climate.temperature != null) {
+    messages.push(`The room itself is a comfy ${Math.round(climate.temperature)}°${climate.humidity != null ? ` at ${Math.round(climate.humidity)}% humidity` : ""}.`);
   }
+
+  // ── A warm sign-off so it never reads purely as a status printout ──
+  messages.push(rotate([
+    hour < 12 ? `Morning, keepers — hope everybody slept well. 🦎`
+      : hour < 17 ? `Hope the afternoon's treating the crew well. 🐢`
+      : `Winding down for the evening — sweet dreams, critters. 🌙`,
+    `Thanks for keeping this little room running. 💚`,
+  ]));
+
   return messages;
 }
 
@@ -140,7 +212,14 @@ function render(data) {
   renderBask(data.bask);
   renderShed(data.shed);
   const messages = buildMessages(data);
-  $("#ticker-track").innerHTML = messages.map((message) => `<span>${escapeHtml(message)}</span>`).join("");
+  const tickerHtml = messages.map((message) => `<span>${escapeHtml(message)}</span>`).join("");
+  const track = $("#ticker-track");
+  // Only rebuild when the text actually changes — otherwise every 15s refresh
+  // restarts the scroll animation and it never gets past the first message.
+  if (track.dataset.content !== tickerHtml) {
+    track.innerHTML = tickerHtml;
+    track.dataset.content = tickerHtml;
+  }
   const counts = data.bask.counts || {};
   const attention = (counts.warning || 0) + (counts.danger || 0);
   const remaining = data.shed?.data?.summary?.remaining;
