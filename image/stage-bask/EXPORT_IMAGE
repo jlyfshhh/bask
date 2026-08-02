@@ -1,2 +1,0 @@
-# Marks this stage as the one pi-gen exports a flashable image from.
-IMG_SUFFIX="-bask"

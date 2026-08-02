@@ -84,7 +84,7 @@
     <g>
       <circle cx="168" cy="1058" r="17" fill="#F2A516"/>
       <path d="M160 1058 l6 6 l11 -13" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
-      <text x="202" y="1067" font-size="29" font-weight="600" fill="#22262e">One-flash image — no terminal, no code</text>
+      <text x="202" y="1067" font-size="29" font-weight="600" fill="#22262e">One-line Docker install — your data stays yours</text>
     </g>
     <g>
       <circle cx="168" cy="1120" r="17" fill="#F2A516"/>

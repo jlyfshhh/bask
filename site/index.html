@@ -4,18 +4,18 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Bask — know your animal room is okay, at a glance</title>
-<meta name="description" content="Bask is a free, self-hosted dashboard for reptile & amphibian keepers. It reads your Govee sensors over Bluetooth and shows a big green 'all good' — or a red alert that names exactly what's wrong. Runs on a cheap Raspberry Pi. No cloud, no account.">
+<meta name="description" content="Bask is a free, self-hosted Docker dashboard for reptile & amphibian keepers. It reads Govee sensors over Bluetooth and shows a big green 'all good' — or a clear alert. One-line Raspberry Pi install, no account.">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 
 <!-- Social / link previews -->
 <meta property="og:type" content="website">
 <meta property="og:title" content="Bask — know your animal room is okay, at a glance">
-<meta property="og:description" content="A free, self-hosted temperature & humidity dashboard for reptile keepers. Green means good. Runs on a cheap Raspberry Pi — no cloud, no account.">
+<meta property="og:description" content="A free, self-hosted temperature & humidity dashboard for reptile keepers. One-line Docker install on Raspberry Pi OS — no account or subscription.">
 <meta property="og:url" content="https://jlyfshhh.github.io/bask/">
 <meta property="og:image" content="https://jlyfshhh.github.io/bask/dashboard.svg">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Bask — know your animal room is okay, at a glance">
-<meta name="twitter:description" content="A free, self-hosted temperature & humidity dashboard for reptile keepers. Green means good.">
+<meta name="twitter:description" content="A free, self-hosted temperature & humidity dashboard for reptile keepers. One-line Docker install on Raspberry Pi OS.">
 <meta name="twitter:image" content="https://jlyfshhh.github.io/bask/dashboard.svg">
 
 <style>
@@ -103,7 +103,7 @@
   .step code{background:#f4eee3;border:1px solid var(--line);border-radius:6px;padding:2px 7px;font-size:.86em}
   .step .url{font-weight:700;color:var(--amber-deep)}
   .alt{max-width:780px;margin:22px auto 0;background:#fff;border:1px dashed var(--line);border-radius:14px;padding:16px 20px;font-size:.93rem;color:var(--muted)}
-  .alt code{background:#f4eee3;border:1px solid var(--line);border-radius:6px;padding:2px 7px}
+  .alt code{display:block;max-width:100%;overflow-x:auto;margin:12px 0;background:#f4eee3;border:1px solid var(--line);border-radius:8px;padding:10px 12px;white-space:nowrap;user-select:all}
 
   /* FAQ */
   .faq{max-width:780px;margin:0 auto;display:grid;gap:12px}
@@ -194,7 +194,7 @@
       <p>A one-time setup with inexpensive, easy-to-find parts. No soldering, no wiring.</p>
     </div>
     <div class="grid">
-      <div class="feat"><div class="ico">🥧</div><h3>A Raspberry Pi</h3><p>Any current model — a Pi 4 or Pi 3B+ is the easiest to buy; a Zero 2 W is the tiniest. Plus a microSD card and a power supply.</p></div>
+      <div class="feat"><div class="ico">🥧</div><h3>A Raspberry Pi</h3><p>Any supported 64-bit model running Raspberry Pi OS — use the SD card that came with it if it already boots. A Pi 4 is an easy pick; a Zero 2 W is the tiniest.</p></div>
       <div class="feat"><div class="ico">🌡️</div><h3>Govee H5075 sensors</h3><p>One small thermo-hygrometer in each enclosure you want to watch. Affordable and widely available.</p></div>
       <div class="feat"><div class="ico">📱</div><h3>Any screen</h3><p>View it on your phone, a tablet, an old monitor, or a smart display — anything with a web browser on your Wi-Fi.</p></div>
     </div>
@@ -206,23 +206,23 @@
     <div class="shead">
       <div class="eyebrow">Getting started</div>
       <h2>Up and running in about 20 minutes</h2>
-      <p>The easy way: write a ready-made Bask card with the official Raspberry Pi app, plug it in, and open it in your browser. No code, no command line.</p>
+      <p>If your Pi already starts Raspberry Pi OS, keep its SD card. Open Terminal, paste one installer command, and Bask handles Docker, Bluetooth, storage, and automatic startup.</p>
     </div>
 
-    <a class="flow"><img src="setup-flow.svg" alt="Four steps: flash the card, plug it in, it runs itself, open bask.local"></a>
+    <a class="flow"><img src="setup-flow.svg" alt="Four steps: start Raspberry Pi OS, open Terminal, install Bask, open the dashboard"></a>
 
     <div class="steps">
       <div class="step"><div class="n">1</div><div>
-        <h3>Write the Bask card</h3>
-        <p>Download the free <b>Raspberry Pi Imager</b> app on your computer. Choose the <b>Bask image</b>, pick your SD card, and in its settings screen type your <b>Wi-Fi name and password</b>. Click write.</p>
+        <h3>Start Raspberry Pi OS</h3>
+        <p>Use the working OS card that came with your Pi, or install <b>Raspberry Pi OS (64-bit)</b> with Raspberry Pi Imager. Connect the Pi to your home network.</p>
       </div></div>
       <div class="step"><div class="n">2</div><div>
-        <h3>Plug it in</h3>
-        <p>Put the card in the Raspberry Pi and connect the power. The first start-up takes a couple of minutes while it quietly joins your Wi-Fi — there’s nothing to watch.</p>
+        <h3>Open Terminal</h3>
+        <p>Use Terminal directly on the Pi desktop, or enable SSH and connect from another computer. No Linux or Docker knowledge is needed.</p>
       </div></div>
       <div class="step"><div class="n">3</div><div>
-        <h3>It runs itself</h3>
-        <p>Bask starts automatically every time the Pi has power. No logging in, no commands — it’s an appliance now.</p>
+        <h3>Paste one line</h3>
+        <p>The installer prepares Docker and Bluetooth, downloads Bask, and sets it to start automatically on every boot.</p>
       </div></div>
       <div class="step"><div class="n">4</div><div>
         <h3>Open it &amp; add your sensors</h3>
@@ -231,12 +231,13 @@
     </div>
 
     <div class="cta-row" style="margin-top:34px">
-      <a class="btn btn-primary" href="https://github.com/jlyfshhh/bask/releases/latest">⬇️ Download the Bask image</a>
-      <a class="btn btn-ghost" href="https://github.com/jlyfshhh/bask/blob/main/docs/SETUP.md">Full step-by-step guide</a>
+      <a class="btn btn-primary" href="https://github.com/jlyfshhh/bask/blob/main/docs/SETUP.md">☀️ Open the beginner setup guide</a>
+      <a class="btn btn-ghost" href="https://github.com/jlyfshhh/bask">View Bask on GitHub</a>
     </div>
     <div class="alt">
-      <b>Already comfortable with a Raspberry Pi?</b> Skip the image — flash plain Raspberry Pi OS, then run one line:
+      <b>The complete Bask installer:</b>
       <code>curl -fsSL https://raw.githubusercontent.com/jlyfshhh/bask/main/get-bask.sh | bash</code>
+      <p style="margin:12px 0 0">Run the same command later to update Bask without replacing your settings or sensor history.</p>
       <p style="margin:12px 0 0">Want care schedules too? Choose <b>Haven</b> in the <a href="https://github.com/jlyfshhh/animal-room">Haven installer</a> to set up Bask + Shed and automatically connect their combined room dashboard.</p>
     </div>
   </div>
@@ -247,10 +248,10 @@
     <div class="shead"><div class="eyebrow">Good to know</div><h2>Questions keepers ask</h2></div>
     <div class="faq">
       <details><summary>Is it really free?</summary><p>Yes — completely free and open-source under the MIT license. There’s no account, no subscription, and nothing is sold. If it helps and you’d like to chip in toward the animals’ crickets, there’s an optional tip jar, but it’s never required.</p></details>
-      <details><summary>Do I need to be techy?</summary><p>No. If you can install an app and type your Wi-Fi password, you can set up Bask the easy way with the prebuilt image. The whole process is a one-time, ~20-minute setup with a visual walkthrough.</p></details>
+      <details><summary>Do I need to be techy?</summary><p>No. Start Raspberry Pi OS, open Terminal, and paste one line. The installer handles Docker, Bluetooth, persistent storage, and automatic startup. The beginner guide explains both the on-screen and remote-SSH routes.</p></details>
       <details><summary>Will it work for my animals?</summary><p>Bask works for any keeper using Govee H5075 sensors. It ships with starting temperature and humidity ranges for several common reptiles, and you can adjust every number to match your species and your room. <b>It’s a monitoring aid, not veterinary advice</b> — always verify against trusted care resources.</p></details>
-      <details><summary>Is my information private?</summary><p>Completely. Bask runs entirely on your own little Raspberry Pi inside your home and never sends anything to the internet or any company. It’s designed to live on your home Wi-Fi only.</p></details>
-      <details><summary>How do updates work?</summary><p>One tap. Settings has a <b>Check for updates</b> button — Bask fetches the newest version, verifies it, and restarts itself in about a minute. Your enclosures, ranges, and settings are never affected, and there’s a one-file backup button for extra peace of mind.</p></details>
+      <details><summary>Is my information private?</summary><p>Yes. Sensor readings, enclosure settings, and history stay on your own Raspberry Pi. Core monitoring needs no account or cloud. Optional integrations such as ntfy alerts or Cielo room climate contact only the service you choose to connect.</p></details>
+      <details><summary>How do updates work?</summary><p>Run the same one-line installer again. It fetches the current code and rebuilds the Bask container without replacing your persistent settings or history. The Settings screen also provides a portable backup download.</p></details>
       <details><summary>Can I show it on a wall display?</summary><p>Yes. Open it on a cheap wall-mounted tablet, an old phone, a monitor, or a smart display like an Amazon Echo Show — anything with a web browser on your network.</p></details>
     </div>
   </div>

@@ -10,7 +10,8 @@
 <p align="center">
   <a href="#license"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-F2A516"></a>
   <img alt="Python" src="https://img.shields.io/badge/python-3.11%2B-blue">
-  <img alt="No build step" src="https://img.shields.io/badge/frontend-vanilla%20JS-success">
+  <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-Docker-A8B7A1">
+  <a href="https://jlyfshhh.github.io/bask/"><img alt="Website" src="https://img.shields.io/badge/website-jlyfshhh.github.io%2Fbask-E39A13"></a>
   <a href="https://ko-fi.com/jlyfshhh"><img alt="Ko-fi" src="https://img.shields.io/badge/Ko--fi-buy%20crickets-FF5E5B?logo=ko-fi&logoColor=white"></a>
 </p>
 
@@ -18,13 +19,16 @@
 
 Bask is a small, self-hosted dashboard for reptile/amphibian keepers (or anyone with [Govee H5075](https://a.co/d/0f8luxOE) sensors). It listens to your sensors over Bluetooth, checks each enclosure against **per-species day/night ranges**, and shows a big green "all good" — or a red alert that names exactly what's wrong.
 
-It runs on an inexpensive **Raspberry Pi** — a Pi 4, Pi 3B+, or Zero 2 W all work great: the Pi only scans and serves; any phone, tablet, or browser displays it. No cloud, no account, no internet required.
+It runs as a Docker container on an inexpensive **Raspberry Pi** — a Pi 4,
+Pi 3B+, Pi 5, or Zero 2 W all work great. The Pi only scans and serves; any
+phone, tablet, or browser displays it. Core sensor monitoring needs no cloud,
+account, or ongoing internet connection.
 
 > **The idea:** walk into your animal room and know instantly — *green or not green* — whether everything's okay. Details are a tap away; status is readable from the doorway.
 
 ![Bask dashboard with example data](docs/dashboard.svg)
 
-> 🆕 **New to Raspberry Pi?** The **[beginner's setup guide](docs/SETUP.md)** takes you from a box of parts to a working dashboard in about 30 minutes — what to buy, how to flash the card, and one line to install. Nothing assumed.
+> 🆕 **New to Raspberry Pi?** The **[beginner's setup guide](docs/SETUP.md)** takes you from a working Raspberry Pi OS card to a dashboard in about 20 minutes—and includes fresh-card instructions if you need them. Nothing assumed.
 
 ## Features
 
@@ -63,31 +67,30 @@ Two processes share one SQLite file so they never contend for the Bluetooth radi
 
 Bask is hardware-agnostic — adapt it to whatever you have:
 
-- **Any current Raspberry Pi.** A **Pi 4** or **Pi 3B+** is the easy, widely-available pick; a **Pi Zero 2 W** is the most compact and lowest-power; a **Pi 5** works too. They all have built-in Wi‑Fi and Bluetooth and run the same image. *(64-bit models only — the original ARMv6 Pi Zero W / Pi 1 are too slow and not recommended.)* Any other Linux machine with a BLE adapter also works, and macOS works for development.
+- **Any current Raspberry Pi running 64-bit Raspberry Pi OS.** A **Pi 4** or **Pi 3B+** is the easy, widely-available pick; a **Pi Zero 2 W** is the most compact and lowest-power; a **Pi 5** works too. Many Pi kits already include a prepared OS card. *(The original ARMv6 Pi Zero W / Pi 1 are too slow and are not supported.)* Any other 64-bit Debian machine with a BLE adapter can work too, and macOS works for development.
 - **One or more Govee H5075** sensors (other Govee BLE thermo-hygrometers that broadcast readings may also work).
 - **A display** — an old tablet or phone, a monitor on the host, a smart display, or just any browser on your network.
 
 ## Install
 
-### Easiest — flash the ready-made image (recommended)
+### Easiest — one line on Raspberry Pi OS
 
-No terminal, no commands. **[Download the latest Bask image](https://github.com/jlyfshhh/bask/releases/latest)**, write it to a microSD card with [Raspberry Pi Imager](https://www.raspberrypi.com/software/) (*Choose OS → Use custom*), set your **Wi‑Fi** in Imager's customisation screen, and power on the Pi. A couple of minutes later, open **http://bask.local:8080** on any device on your network. Works on any 64-bit Pi (Pi 3/3B+, 4, 400, 5, Zero 2 W).
-
-New to Raspberry Pi entirely? The **[beginner's setup guide](docs/SETUP.md)** walks through every step with nothing assumed — including what to buy.
-
-### One line on an existing Pi
-
-Already running Raspberry Pi OS with SSH? Just run:
+If your Pi already boots into Raspberry Pi OS, connect it to your network, open
+Terminal on the Pi (or connect with SSH), and paste:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jlyfshhh/bask/main/get-bask.sh | bash
 ```
 
-This installs Docker when needed, enables BlueZ passive scanning and mDNS, and
-runs Bask as a restart-safe container with its settings and history in
+This installs Docker when needed, enables Bluetooth passive scanning and local
+hostname discovery, and runs Bask as a restart-safe container with its settings and history in
 `~/bask/data`. When it finishes it prints your dashboard URL —
 `http://<hostname>.local:8080`. Run the same command again any time to update;
 the persistent data directory is never replaced.
+
+New to Raspberry Pi or unsure what “open Terminal” means? The
+**[beginner's setup guide](docs/SETUP.md)** walks through the supplied-card and
+fresh-card paths, enabling SSH, installation, and first sensor setup.
 
 Already running the former systemd/virtualenv version? The installer stops the
 old services, takes a timestamped backup (including a consistent SQLite
@@ -127,7 +130,6 @@ curl -fsSL https://raw.githubusercontent.com/jlyfshhh/bask/main/get-bask.sh | ba
 Settings has a **💾 Download backup** button for portable, secret-free
 configuration. `scripts/backup.sh` creates a private filesystem backup of
 configuration, SQLite history, and configured Cielo credentials.
-Ready-made image installations retain their existing in-app updater.
 
 ## Configuration
 
@@ -188,7 +190,7 @@ What Bask does on its side:
 - **Same-origin only** — the API sends no permissive CORS headers, so other websites can't read it or send it cross-origin writes.
 - **XSS-safe rendering** — all user- and device-provided strings are HTML-escaped, including BLE advertisement names (so a crafted nearby device name can't inject script).
 - **Validated input** — request payloads are length- and range-checked.
-- **Runs unprivileged** — the services run as a normal user in the `bluetooth` group, not root.
+- **Container-isolated** — Bask runs inside its own Docker container. The installer is launched as your normal user and requests `sudo` only for Docker, Bluetooth, and host-service setup. The container receives the host Bluetooth D-Bus socket it needs for scanning, but no other host directories.
 
 ## ⚠️ Husbandry disclaimer
 
@@ -212,7 +214,7 @@ deploy/install.sh installs Docker/BlueZ/mDNS and starts the container
 scripts/backup.sh consistent settings + SQLite backup
 start.sh          run scanner + web server together (local/dev)
 kiosk.sh          optional fullscreen browser launcher for a host-attached screen
-docs/SETUP.md     complete beginner's guide (hardware → flashing → install)
+docs/SETUP.md     complete beginner's guide (Pi OS → one-line install → first sensor)
 ```
 
 ## Bask + Shed = Haven
