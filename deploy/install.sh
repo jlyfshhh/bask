@@ -44,7 +44,10 @@ fi
 
 echo "==> Installing Bluetooth, mDNS, and backup tools"
 apt-get update -qq
-apt-get install -y -qq avahi-daemon bluez rfkill sqlite3
+# fonts-noto-color-emoji: the room display uses emoji in its status messages,
+# and a bare Raspberry Pi OS install has no emoji font, so they render as
+# empty boxes on a wall-mounted kiosk.
+apt-get install -y -qq avahi-daemon bluez rfkill sqlite3 fonts-noto-color-emoji
 systemctl enable --now docker avahi-daemon >/dev/null 2>&1
 usermod -aG docker,bluetooth "$run_user" || true
 rfkill unblock bluetooth || true
