@@ -215,20 +215,22 @@ kiosk.sh          optional fullscreen browser launcher for a host-attached scree
 docs/SETUP.md     complete beginner's guide (hardware → flashing → install)
 ```
 
-## The animal-room family
+## Bask + Shed = Haven
 
-Bask is one of three companion projects for keepers:
+Bask can run by itself, or alongside Shed:
 
 | | Project | What it watches |
 |---|---|---|
 | ☀️ | **Bask** *(this repo)* | The environment — live temperature & humidity on a wall display |
 | 🐍 | **[Shed](https://github.com/jlyfshhh/shed)** | The care — feeding, weights, enclosure work, and history for terrestrial animals |
-| 💧 | **[Clarity](https://github.com/jlyfshhh/clarity)** | The water — aquarium & pond tests, maintenance, and livestock |
+| 🌿 | **Haven** | The combined room view — enclosure status and today's care in one glance |
 
-They're separate self-hosted services on purpose — one app can never take down another — but they share a design language, and Shed & Clarity link mixed habitats with stable shared IDs.
+Haven is not a third database. It is the secure, read-only room dashboard that
+appears when Bask and Shed are installed together. The apps remain separate, so
+either can still work independently and each keeps its own portable data.
 
-Install any combination from one chooser with the
-**[Animal Room installer](https://github.com/jlyfshhh/animal-room)**.
+Choose Bask, Shed, or the combined Haven setup from the
+**[Haven installer](https://github.com/jlyfshhh/animal-room)**.
 
 ## 🦗 Buy the animals some crickets
 
