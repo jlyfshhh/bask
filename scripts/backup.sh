@@ -10,15 +10,30 @@ dest="$backup_dir/bask-$stamp"
 
 mkdir -p "$dest"
 
+copy_private() {
+  local source="$1" target="$2"
+  if [[ -r "$source" ]]; then
+    install -m 600 "$source" "$target"
+  elif command -v sudo >/dev/null 2>&1; then
+    # Bask's container runs as root so credentials it creates in the bind mount
+    # can be root-owned. Copy through sudo, but hand the backup back to the
+    # invoking keeper and never loosen its permissions.
+    sudo install -m 600 -o "$(id -u)" -g "$(id -g)" "$source" "$target"
+  else
+    echo "Cannot read $source. Run this backup as a user with access or install sudo." >&2
+    exit 1
+  fi
+}
+
 if [[ -f "$data_dir/config.json" ]]; then
-  cp "$data_dir/config.json" "$dest/config.json"
+  copy_private "$data_dir/config.json" "$dest/config.json"
 fi
 
 # This is the private filesystem backup, so preserve the status-only Cielo
 # integration when configured. Keep the copied secret owner-readable only; the
 # public Manage-page export intentionally continues to omit it.
 if [[ -f "$data_dir/cielo-secrets.json" ]]; then
-  install -m 600 "$data_dir/cielo-secrets.json" "$dest/cielo-secrets.json"
+  copy_private "$data_dir/cielo-secrets.json" "$dest/cielo-secrets.json"
 fi
 
 if [[ -f "$data_dir/readings.db" ]]; then
@@ -26,7 +41,16 @@ if [[ -f "$data_dir/readings.db" ]]; then
     echo "sqlite3 is required for a consistent live database backup." >&2
     exit 1
   }
-  sqlite3 "$data_dir/readings.db" ".backup '$dest/readings.db'"
+  if [[ -r "$data_dir/readings.db" ]]; then
+    sqlite3 "$data_dir/readings.db" ".backup '$dest/readings.db'"
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo sqlite3 "$data_dir/readings.db" ".backup '$dest/readings.db'"
+    sudo chown "$(id -u):$(id -g)" "$dest/readings.db"
+    chmod 600 "$dest/readings.db"
+  else
+    echo "Cannot read $data_dir/readings.db. Run this backup as a user with access or install sudo." >&2
+    exit 1
+  fi
 fi
 
 tar -C "$backup_dir" -czf "$dest.tar.gz" "$(basename "$dest")"
