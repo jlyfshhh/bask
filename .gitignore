@@ -8,6 +8,7 @@ readings.db
 readings.db-shm
 readings.db-wal
 data/
+backups/
 .env
 
 # Personal configuration — copy config.example.json to config.json and edit
