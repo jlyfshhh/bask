@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     steps:
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Decide which Bask ref to bake in
         id: ref
@@ -61,7 +61,7 @@ jobs:
           verbose-output: true
 
       - name: Upload image as a workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: bask-image
           path: ${{ steps.build.outputs.image-path }}
