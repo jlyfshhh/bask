@@ -212,6 +212,9 @@ body {
   border-radius: var(--radius);
   border: 2px solid var(--border);
   background: var(--surface);
+  /* The grid squeezes cards to fit without scrolling. Past this point a
+     card is unreadable, so let the grid scroll instead of clipping. */
+  min-height: 150px;
   overflow: hidden;
   cursor: pointer;
   transition: border-color .25s, background .25s, transform .08s;
@@ -583,4 +586,63 @@ a.btn { text-decoration: none; }
 /* On a wide touchscreen, keep the wizard comfortable side-by-side */
 @media (min-width: 760px) {
   .pn-main { gap: 24px; }
+}
+
+/* ── Phones ──────────────────────────────────────────────────
+   The dashboard is built for a wall display: a fixed-height,
+   non-scrolling shell where the card grid takes the leftover
+   space. On a phone that leftover is a couple hundred pixels, so
+   the cards collapse to slivers. Hand the page back to normal
+   document scrolling and let the grid size to its content. */
+@media (max-width: 760px) {
+  html, body { height: auto; min-height: 100%; overflow: visible; }
+
+  #grid {
+    flex: none;
+    overflow: visible;
+    grid-template-columns: 1fr;
+    gap: 12px;
+    padding: 12px;
+  }
+
+  /* Top bar: let it wrap instead of crushing the logo and clock. */
+  #topbar {
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 10px 14px;
+    position: sticky;
+    top: 0;
+    z-index: 30;
+  }
+  .brand { flex-direction: row; align-items: center; gap: 10px; }
+  .brand-logo { height: 30px; }
+  #clock { margin-top: 0; white-space: nowrap; font-size: 0.78rem; }
+  .summary { order: 3; width: 100%; gap: 6px; flex: none; }
+  .pill { font-size: 0.9rem; padding: 6px 12px; }
+  .pill .dot { width: 9px; height: 9px; }
+  /* Keep climate, day/night, and Manage together on one row. */
+  .room-climate { min-width: 0; max-width: 148px; padding: 5px 9px; }
+  .period-badge { padding: 6px 10px; font-size: 0.85rem; }
+  .manage-btn { padding: 8px 12px; font-size: 0.9rem; }
+
+  /* Status banner: stack it and stop the enclosure list from
+     wrapping into a tall column beside the headline. */
+  .status-banner {
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    padding: 10px 14px;
+  }
+  .status-banner .sb-icon { font-size: 1.6rem; }
+  .status-banner .sb-text { font-size: 1.5rem; }
+  .status-banner .sb-sub {
+    font-size: 0.9rem;
+    font-weight: 600;
+    margin-left: 0;
+    text-align: left;
+    max-width: 100%;
+    width: 100%;
+    line-height: 1.35;
+  }
+  .status-banner .sb-batt { margin-left: 0; }
+  .status-banner.idle .sb-text { font-size: 1.1rem; }
 }
