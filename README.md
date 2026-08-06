@@ -80,7 +80,7 @@ If your Pi already boots into Raspberry Pi OS, connect it to your network, open
 Terminal on the Pi (or connect with SSH), and paste:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jlyfshhh/bask/main/get-bask.sh | bash
+curl -fsSL https://animalroom.app/bask/install.sh | bash
 ```
 
 This installs Docker when needed, enables Bluetooth passive scanning and local
@@ -125,7 +125,7 @@ Re-run the one-line installer. It fast-forwards the code and rebuilds the
 container while leaving `~/bask/data` untouched:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jlyfshhh/bask/main/get-bask.sh | bash
+curl -fsSL https://animalroom.app/bask/install.sh | bash
 ```
 
 Settings has a **💾 Download backup** button for portable, secret-free

@@ -67,7 +67,7 @@ connection asks whether to continue; type `yes`, then enter the Pi password.
 Paste this entire line into Terminal and press Enter:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jlyfshhh/bask/main/get-bask.sh | bash
+curl -fsSL https://animalroom.app/bask/install.sh | bash
 ```
 
 The installer may ask for the Pi password while it prepares Docker and
@@ -110,7 +110,7 @@ Run the same installer command again. It downloads the latest code and rebuilds
 the container without replacing `~/bask/data`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jlyfshhh/bask/main/get-bask.sh | bash
+curl -fsSL https://animalroom.app/bask/install.sh | bash
 ```
 
 Use **⚙ Manage → Settings → Download backup** periodically. Technical users can
