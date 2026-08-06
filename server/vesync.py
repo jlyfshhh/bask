@@ -10,6 +10,12 @@ from typing import Any, Callable
 
 POLL_SECONDS = 120
 STALE_SECONDS = 300
+LOGIN_HELP = (
+    "VeSync rejected that email/password. Confirm the account can sign in "
+    "directly in the VeSync app or reset its password, then try again. If the "
+    "account uses Apple or Google sign-in, create an email/password VeSync "
+    "account and share the humidifier with it."
+)
 
 
 def _default_factory(*args, **kwargs):
@@ -89,8 +95,18 @@ class VeSyncHumidifierMonitor:
         ) as manager:
             loaded = False if login else await manager.load_credentials_from_file(self.token_path)
             if not loaded:
-                if not await manager.login():
-                    raise ValueError("VeSync rejected that login.")
+                try:
+                    logged_in = await manager.login()
+                except Exception as exc:
+                    # pyvesync raises VeSyncLoginError when the cloud accepted
+                    # the request but rejected the supplied username/password.
+                    # Match by name so this module remains testable without
+                    # importing pyvesync's optional exception hierarchy.
+                    if type(exc).__name__ == "VeSyncLoginError":
+                        raise ValueError(LOGIN_HELP) from None
+                    raise
+                if not logged_in:
+                    raise ValueError(LOGIN_HELP)
                 await manager.save_credentials(self.token_path)
                 if self.token_path.exists():
                     os.chmod(self.token_path, 0o600)

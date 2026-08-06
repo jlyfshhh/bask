@@ -49,6 +49,15 @@ class FakeClient:
     async def update(self): return None
 
 
+class VeSyncLoginError(Exception):
+    pass
+
+
+class FakeErrorClient(FakeClient):
+    async def login(self):
+        raise VeSyncLoginError("Invalid password - account or password incorrect")
+
+
 async def run_tests():
     with tempfile.TemporaryDirectory() as td:
         secret = Path(td) / "vesync-secrets.json"
@@ -70,6 +79,26 @@ async def run_tests():
 
         await monitor.poll_once()
         assert FakeClient.login_calls == 1, "saved token should be reused"
+
+        rejected = VeSyncHumidifierMonitor(Path(td) / "rejected-secret.json",
+                                            Path(td) / "rejected-token.json", FakeClient)
+        try:
+            await rejected.configure("keeper@example.com", "wrong")
+            raise AssertionError("invalid VeSync credentials should fail")
+        except ValueError as exc:
+            assert "reset its password" in str(exc)
+            assert "share the humidifier" in str(exc)
+        assert not rejected.secrets_path.exists()
+
+        rejected_exception = VeSyncHumidifierMonitor(
+            Path(td) / "rejected-exception-secret.json",
+            Path(td) / "rejected-exception-token.json", FakeErrorClient)
+        try:
+            await rejected_exception.configure("keeper@example.com", "wrong")
+            raise AssertionError("VeSyncLoginError should become setup guidance")
+        except ValueError as exc:
+            assert "reset its password" in str(exc)
+        assert not rejected_exception.secrets_path.exists()
 
         FakeClient.devices.humidifiers = [
             FakeDevice(), FakeDevice("humid-2", "Nursery", 48)]
