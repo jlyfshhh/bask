@@ -11,7 +11,7 @@
   <a href="#license"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-F2A516"></a>
   <img alt="Python" src="https://img.shields.io/badge/python-3.11%2B-blue">
   <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-Docker-A8B7A1">
-  <a href="https://jlyfshhh.github.io/bask/"><img alt="Website" src="https://img.shields.io/badge/website-jlyfshhh.github.io%2Fbask-E39A13"></a>
+  <a href="https://animalroom.app/bask/"><img alt="Website" src="https://img.shields.io/badge/website-animalroom.app%2Fbask-E39A13"></a>
   <a href="https://ko-fi.com/jlyfshhh"><img alt="Ko-fi" src="https://img.shields.io/badge/Ko--fi-buy%20crickets-FF5E5B?logo=ko-fi&logoColor=white"></a>
 </p>
 
