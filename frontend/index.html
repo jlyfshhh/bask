@@ -83,6 +83,24 @@
     </div>
   </div>
 
+  <!-- ── Head Keeper unlock (shown when setup is locked) ── -->
+  <div id="keeper" class="sheet-overlay" onclick="if(event.target===this)closeKeeper()">
+    <div class="sheet keeper-sheet">
+      <h2>🔑 Head Keeper key</h2>
+      <p class="keeper-note">The dashboard is open to everyone in the house. Changing
+        the setup — sensors, enclosures, ranges, integrations — needs the key.</p>
+      <form onsubmit="submitKeeperUnlock(event)">
+        <input id="keeper-key" type="password" autocomplete="current-password"
+               placeholder="Head Keeper key" aria-label="Head Keeper key">
+        <p id="keeper-error" class="keeper-error" role="alert"></p>
+        <div class="keeper-actions">
+          <button type="button" class="btn" onclick="closeKeeper()">Cancel</button>
+          <button type="submit" class="btn on" id="keeper-submit">Unlock</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Generic editor sheet reused by enclosure/sensor/species forms -->
   <div id="editor" class="sheet-overlay" onclick="if(event.target===this)closeEditor()">
     <div class="sheet" id="editor-sheet"></div>

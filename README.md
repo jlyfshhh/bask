@@ -189,15 +189,37 @@ Setup takes about two minutes: **⚙ Manage → Settings → Set up phone alerts
 
 ## Security
 
-Bask is built for a **trusted local network** and is **not authenticated**. Treat it like any other LAN-only IoT service:
+Bask is built for a **trusted local network**. Reading the dashboard is open to
+anyone on that network on purpose — it is a wall display, and everyone in the
+house should be able to glance at it. Changing the setup is not.
 
-- **Don't expose it to the internet.** Don't port-forward `:8080` or put it on a public network. Anyone who can reach the port can read and change your configuration.
+### Head Keeper key
+
+A fresh install generates a **Head Keeper key** and prints it once. It is needed
+to change sensors, enclosures, species ranges, thermostats, cloud integrations,
+phone alerts, backups, and updates. It is stored only as a PBKDF2 hash — Bask
+never writes it back in the clear and has no endpoint that returns it.
+
+- **The display stays open.** Every read the dashboard needs works without the
+  key, so the wall display and everyone's phones are unaffected.
+- Set, change, or remove it under **Manage → Settings**. Changing it requires
+  the current key, and doing so signs out every other device.
+- Also running Shed? Set Bask's key to the same Head Keeper code and the
+  household has one key to remember. Rotating it in Shed does not rotate it
+  here — update both.
+- **Upgrading an existing install does not lock you out.** Installs with no key
+  keep behaving exactly as before until you set one.
+
+The key limits *changes*, not *viewing*. It is not a substitute for keeping the
+port off the internet:
+
+- **Don't expose it to the internet.** Don't port-forward `:8080` or put it on a public network.
 - It binds to `0.0.0.0` so your wall display can reach it. Restrict it with a host firewall, an IoT VLAN, or by binding to a specific interface if you want tighter scoping.
 - For remote access, use a **VPN** (e.g. WireGuard/Tailscale) or an authenticating reverse proxy — never the raw port.
 
 What Bask does on its side:
 
-- **No cloud, no accounts, no secrets** — it never touches a Govee account, and stores no credentials. Your `config.json` (sensor IDs + enclosure names) is git-ignored.
+- **No account, and no cloud unless you ask for one** — it never touches a Govee account. Bluetooth is receive-only: Bask listens to the advertisements your sensors already broadcast and never connects, pairs, or advertises itself. The optional Cielo and VeSync integrations are the only parts that reach the internet, and each stores its credentials in its own `0600` file inside the private data directory ([details](#levoit-classic-300s-room-humidifier-optional)). Your `config.json` (sensor IDs + enclosure names) is git-ignored.
 - **Same-origin only** — the API sends no permissive CORS headers, so other websites can't read it or send it cross-origin writes.
 - **XSS-safe rendering** — all user- and device-provided strings are HTML-escaped, including BLE advertisement names (so a crafted nearby device name can't inject script).
 - **Validated input** — request payloads are length- and range-checked.

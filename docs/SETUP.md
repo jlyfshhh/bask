@@ -84,6 +84,30 @@ http://raspberrypi.local:8080
 Leave the Pi powered on. Bask's configuration and history live in
 `~/bask/data`, outside the replaceable container.
 
+### Write down the Head Keeper key
+
+The installer also prints a **Head Keeper key**, once:
+
+```text
+Head Keeper key:  bask_XXXXXXXXXXXXXXXXXXXXXXXX
+```
+
+Save it somewhere you'll find it again. Bask stores only a hash of it, so
+nobody — including you — can read it back out later.
+
+Anyone in the house can open the dashboard and read it without the key. The key
+is only needed to *change* the setup: adding sensors, editing enclosures and
+species ranges, connecting a thermostat or humidifier, phone alerts, backups,
+and updates.
+
+You can change it any time under **⚙ Manage → Settings → Head Keeper key** —
+including setting it to the same Head Keeper code you use in Shed, so the
+household only has one to remember.
+
+If you lose it: edit `~/bask/data/config.json`, delete the `"keeper"` block,
+and restart Bask (`cd ~/bask && docker compose restart`). That returns Bask to
+being fully open so you can set a new key.
+
 ## 5. Open Bask and add the first sensor
 
 1. On a phone, tablet, or computer connected to the same home network, open the

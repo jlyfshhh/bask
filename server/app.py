@@ -21,12 +21,13 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
-from fastapi import Body, FastAPI, HTTPException, Response
+from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scanner"))
 import db  # noqa: E402
+from server import keeper
 from server.cielo import CieloMonitor
 from server.vesync import VeSyncHumidifierMonitor
 
@@ -68,6 +69,7 @@ def load_config() -> dict:
     cfg["ntfy"].setdefault("server", "https://ntfy.sh")
     cfg["ntfy"].setdefault("topic", "")
     cfg["ntfy"].setdefault("enabled", False)
+    cfg.setdefault("keeper", {})                       # Head Keeper key, stored hashed
     return cfg
 
 
@@ -254,6 +256,104 @@ async def lifespan(app: FastAPI):
 # and cross-origin JSON writes fail their preflight — important because the API
 # is unauthenticated and meant only for a trusted local network.
 app = FastAPI(lifespan=lifespan)
+
+
+# ── Head Keeper key ──────────────────────────────────────────────────────────
+# Reading Bask stays open to the whole home network — it is a wall display.
+# Changing its setup does not. Every mutating route, plus the two reads that
+# would reveal the ntfy topic, depends on require_keeper below.
+#
+# With no key configured Bask is fully open, exactly as it behaved before, so
+# updating an existing install never locks anyone out. New installs get a key
+# from install.sh instead.
+
+def require_keeper(request: Request) -> None:
+    record = load_config().get("keeper")
+    if not keeper.is_configured(record):
+        return  # No key set: unchanged, open behaviour.
+    if keeper.session_is_valid(request.cookies.get(keeper.COOKIE_NAME), record):
+        return
+    raise HTTPException(401, "Head Keeper key required")
+
+
+Keeper = Depends(require_keeper)
+
+
+class KeeperUnlock(BaseModel):
+    key: str = Field(min_length=1, max_length=512)
+
+
+class KeeperSetKey(BaseModel):
+    key: str = Field(min_length=1, max_length=512)
+    current: str = Field(default="", max_length=512)
+
+
+@app.get("/api/keeper")
+def keeper_status(request: Request):
+    """Open on purpose: the UI needs to know whether to show manage controls."""
+    record = load_config().get("keeper")
+    configured = keeper.is_configured(record)
+    return {
+        "configured": configured,
+        # With no key set everyone is effectively the Head Keeper.
+        "unlocked": (not configured)
+        or keeper.session_is_valid(request.cookies.get(keeper.COOKIE_NAME), record),
+    }
+
+
+@app.post("/api/keeper/unlock")
+def keeper_unlock(payload: KeeperUnlock, response: Response):
+    record = load_config().get("keeper")
+    if not keeper.is_configured(record):
+        return {"ok": True, "configured": False, "unlocked": True}
+    if not keeper.verify_key(payload.key, record):
+        raise HTTPException(401, "That key does not match.")
+    response.set_cookie(keeper.COOKIE_NAME, keeper.session_token(record), **keeper.cookie_kwargs())
+    return {"ok": True, "configured": True, "unlocked": True}
+
+
+@app.post("/api/keeper/lock")
+def keeper_lock(response: Response):
+    response.delete_cookie(keeper.COOKIE_NAME, path="/")
+    return {"ok": True}
+
+
+@app.post("/api/keeper/key")
+def keeper_set_key(payload: KeeperSetKey, request: Request, response: Response):
+    """
+    Set or change the key.
+
+    Changing it requires the current one — otherwise anybody on the network
+    could lock the Head Keeper out of their own dashboard. Setting the first
+    key needs no proof, because until then there is nothing to prove.
+    """
+    cfg = load_config()
+    record = cfg.get("keeper")
+    if keeper.is_configured(record) and not (
+        keeper.session_is_valid(request.cookies.get(keeper.COOKIE_NAME), record)
+        or keeper.verify_key(payload.current, record)
+    ):
+        raise HTTPException(401, "Enter the current Head Keeper key to change it.")
+    try:
+        new_key = keeper.validate_new_key(payload.key)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    cfg["keeper"] = keeper.hash_key(new_key)
+    save_config(cfg)
+    # Re-issue: the token is derived from the hash, so the old cookie is dead.
+    response.set_cookie(
+        keeper.COOKIE_NAME, keeper.session_token(cfg["keeper"]), **keeper.cookie_kwargs())
+    return {"ok": True, "configured": True, "unlocked": True}
+
+
+@app.delete("/api/keeper/key")
+def keeper_clear_key(request: Request, response: Response, _: None = Keeper):
+    """Remove the lock and go back to open. Requires being unlocked already."""
+    cfg = load_config()
+    cfg["keeper"] = {}
+    save_config(cfg)
+    response.delete_cookie(keeper.COOKIE_NAME, path="/")
+    return {"ok": True, "configured": False, "unlocked": True}
 
 
 # ── Service health ───────────────────────────────────────────────────────────
@@ -466,7 +566,7 @@ def list_species():
 
 
 @app.post("/api/species")
-def create_species(payload: SpeciesPayload):
+def create_species(payload: SpeciesPayload, _: None = Keeper):
     cfg = load_config()
     sp_id = str(int(time.time() * 1000))
     cfg["species"].append({"id": sp_id, **payload.model_dump()})
@@ -475,7 +575,7 @@ def create_species(payload: SpeciesPayload):
 
 
 @app.put("/api/species/{sp_id}")
-def update_species(sp_id: str, payload: SpeciesPayload):
+def update_species(sp_id: str, payload: SpeciesPayload, _: None = Keeper):
     cfg = load_config()
     for sp in cfg["species"]:
         if sp["id"] == sp_id:
@@ -486,7 +586,7 @@ def update_species(sp_id: str, payload: SpeciesPayload):
 
 
 @app.delete("/api/species/{sp_id}")
-def delete_species(sp_id: str):
+def delete_species(sp_id: str, _: None = Keeper):
     cfg = load_config()
     before = len(cfg["species"])
     cfg["species"] = [sp for sp in cfg["species"] if sp["id"] != sp_id]
@@ -519,7 +619,7 @@ def list_enclosures():
 
 
 @app.post("/api/enclosures")
-def create_enclosure(payload: EnclosurePayload):
+def create_enclosure(payload: EnclosurePayload, _: None = Keeper):
     cfg = load_config()
     enc_id = str(int(time.time() * 1000))
     cfg["enclosures"].append({
@@ -531,7 +631,7 @@ def create_enclosure(payload: EnclosurePayload):
 
 
 @app.put("/api/enclosures/reorder")
-def reorder_enclosures(payload: ReorderPayload):
+def reorder_enclosures(payload: ReorderPayload, _: None = Keeper):
     cfg = load_config()
     id_to_enc = {e["id"]: e for e in cfg["enclosures"]}
     cfg["enclosures"] = [id_to_enc[eid] for eid in payload.order if eid in id_to_enc]
@@ -540,7 +640,7 @@ def reorder_enclosures(payload: ReorderPayload):
 
 
 @app.put("/api/enclosures/{enc_id}")
-def update_enclosure(enc_id: str, payload: EnclosurePayload):
+def update_enclosure(enc_id: str, payload: EnclosurePayload, _: None = Keeper):
     cfg = load_config()
     for enc in cfg["enclosures"]:
         if enc["id"] == enc_id:
@@ -553,7 +653,7 @@ def update_enclosure(enc_id: str, payload: EnclosurePayload):
 
 
 @app.delete("/api/enclosures/{enc_id}")
-def delete_enclosure(enc_id: str):
+def delete_enclosure(enc_id: str, _: None = Keeper):
     cfg = load_config()
     before = len(cfg["enclosures"])
     cfg["enclosures"] = [e for e in cfg["enclosures"] if e["id"] != enc_id]
@@ -583,7 +683,7 @@ def list_sensors():
 
 
 @app.post("/api/sensors")
-def add_sensor(payload: SensorPayload):
+def add_sensor(payload: SensorPayload, _: None = Keeper):
     cfg = load_config()
     mac = payload.mac.upper()
     if any(s["mac"].upper() == mac for s in cfg["sensors"]):
@@ -594,7 +694,7 @@ def add_sensor(payload: SensorPayload):
 
 
 @app.put("/api/sensors/{mac}")
-def update_sensor(mac: str, payload: SensorUpdate):
+def update_sensor(mac: str, payload: SensorUpdate, _: None = Keeper):
     cfg = load_config()
     for s in cfg["sensors"]:
         if s["mac"].upper() == mac.upper():
@@ -606,7 +706,7 @@ def update_sensor(mac: str, payload: SensorUpdate):
 
 
 @app.delete("/api/sensors/{mac}")
-def delete_sensor(mac: str):
+def delete_sensor(mac: str, _: None = Keeper):
     cfg = load_config()
     before = len(cfg["sensors"])
     target = mac.upper()
@@ -630,7 +730,7 @@ class PairPayload(BaseModel):
 
 
 @app.post("/api/pair")
-def pair_sensor(payload: PairPayload):
+def pair_sensor(payload: PairPayload, _: None = Keeper):
     """Assign a discovered sensor to an enclosure slot in one atomic step.
 
     Used by the touch "Pair by proximity" wizard: the user holds a sensor near
@@ -666,7 +766,7 @@ def pair_sensor(payload: PairPayload):
 
 
 @app.post("/api/unpair")
-def unpair_sensor(payload: PairPayload):
+def unpair_sensor(payload: PairPayload, _: None = Keeper):
     """Remove a sensor from a given enclosure slot (undo a mis-tap in the wizard)."""
     cfg = load_config()
     mac = payload.mac.upper()
@@ -689,7 +789,7 @@ class SettingsPayload(BaseModel):
 
 
 @app.put("/api/settings")
-def update_settings(payload: SettingsPayload):
+def update_settings(payload: SettingsPayload, _: None = Keeper):
     cfg = load_config()
     for k, v in payload.model_dump(exclude_none=True).items():
         cfg["settings"][k] = v
@@ -721,7 +821,7 @@ def list_thermostats():
 
 
 @app.post("/api/thermostats/test")
-def test_thermostat(payload: ThermostatTest):
+def test_thermostat(payload: ThermostatTest, _: None = Keeper):
     """Probe an IP for a Herpstat /RAWSTATUS page before saving it.
 
     Sync handler → FastAPI runs it in a threadpool, so the (up to 5s) blocking
@@ -738,7 +838,7 @@ def test_thermostat(payload: ThermostatTest):
 
 
 @app.post("/api/thermostats")
-def add_thermostat(payload: ThermostatPayload):
+def add_thermostat(payload: ThermostatPayload, _: None = Keeper):
     cfg = load_config()
     ip = payload.ip.strip()
     if any(t.get("ip") == ip for t in cfg["thermostats"]):
@@ -749,7 +849,7 @@ def add_thermostat(payload: ThermostatPayload):
 
 
 @app.put("/api/thermostats/{ip}")
-def update_thermostat(ip: str, payload: ThermostatPayload):
+def update_thermostat(ip: str, payload: ThermostatPayload, _: None = Keeper):
     cfg = load_config()
     new_ip = payload.ip.strip()
     for t in cfg["thermostats"]:
@@ -763,7 +863,7 @@ def update_thermostat(ip: str, payload: ThermostatPayload):
 
 
 @app.delete("/api/thermostats/{ip}")
-def delete_thermostat(ip: str):
+def delete_thermostat(ip: str, _: None = Keeper):
     cfg = load_config()
     before = len(cfg["thermostats"])
     cfg["thermostats"] = [t for t in cfg["thermostats"] if t.get("ip") != ip]
@@ -790,7 +890,7 @@ def cielo_status():
 
 
 @app.post("/api/cielo/connect")
-async def connect_cielo(payload: CieloConnectPayload):
+async def connect_cielo(payload: CieloConnectPayload, _: None = Keeper):
     try:
         return await cielo.configure(payload.api_key)
     except AuthenticationError:
@@ -803,7 +903,7 @@ async def connect_cielo(payload: CieloConnectPayload):
 
 
 @app.put("/api/cielo/device")
-async def select_cielo_device(payload: CieloDevicePayload):
+async def select_cielo_device(payload: CieloDevicePayload, _: None = Keeper):
     try:
         return await cielo.select_device(payload.device_id)
     except ValueError as exc:
@@ -814,7 +914,7 @@ async def select_cielo_device(payload: CieloDevicePayload):
 
 
 @app.delete("/api/cielo")
-async def disconnect_cielo():
+async def disconnect_cielo(_: None = Keeper):
     await cielo.clear()
     return {"ok": True}
 
@@ -837,7 +937,7 @@ def vesync_status():
 
 
 @app.post("/api/vesync/connect")
-async def connect_vesync(payload: VeSyncConnectPayload):
+async def connect_vesync(payload: VeSyncConnectPayload, _: None = Keeper):
     try:
         return await humidifier.configure(
             payload.username, payload.password, payload.country_code)
@@ -849,7 +949,7 @@ async def connect_vesync(payload: VeSyncConnectPayload):
 
 
 @app.put("/api/vesync/device")
-async def select_vesync_device(payload: VeSyncDevicePayload):
+async def select_vesync_device(payload: VeSyncDevicePayload, _: None = Keeper):
     try:
         return await humidifier.select_device(payload.device_id)
     except ValueError as exc:
@@ -860,7 +960,7 @@ async def select_vesync_device(payload: VeSyncDevicePayload):
 
 
 @app.delete("/api/vesync")
-async def disconnect_vesync():
+async def disconnect_vesync(_: None = Keeper):
     await humidifier.clear()
     return {"ok": True}
 
@@ -957,7 +1057,7 @@ class NtfyToggle(BaseModel):
 
 
 @app.get("/api/ntfy")
-def ntfy_status():
+def ntfy_status(_: None = Keeper):
     cfg = load_config()
     return {"topic": _ntfy_topic(cfg), "server": cfg["ntfy"]["server"],
             "enabled": cfg["ntfy"]["enabled"], "subscribe_url": _subscribe_url(cfg),
@@ -965,7 +1065,7 @@ def ntfy_status():
 
 
 @app.post("/api/ntfy")
-def ntfy_set(payload: NtfyToggle):
+def ntfy_set(payload: NtfyToggle, _: None = Keeper):
     cfg = load_config()
     cfg["ntfy"]["enabled"] = payload.enabled
     _ntfy_topic(cfg)
@@ -974,7 +1074,7 @@ def ntfy_set(payload: NtfyToggle):
 
 
 @app.post("/api/ntfy/test")
-def ntfy_test():
+def ntfy_test(_: None = Keeper):
     cfg = load_config()
     try:
         _ntfy_publish(cfg, "Bask",
@@ -985,7 +1085,7 @@ def ntfy_test():
 
 
 @app.get("/api/ntfy/qr")
-def ntfy_qr():
+def ntfy_qr(_: None = Keeper):
     if not _QR_OK:
         raise HTTPException(404, "QR rendering not available")
     import io
@@ -1050,14 +1150,14 @@ def _validate_import(data: dict) -> dict:
 
 
 @app.get("/api/config/export")
-def export_config():
+def export_config(_: None = Keeper):
     cfg = load_config()
     return Response(content=json.dumps(cfg, indent=2), media_type="application/json",
                     headers={"Content-Disposition": 'attachment; filename="bask-settings.json"'})
 
 
 @app.post("/api/config/import")
-def import_config(payload: dict = Body()):
+def import_config(payload: dict = Body(), _: None = Keeper):
     if len(json.dumps(payload)) > IMPORT_MAX_BYTES:
         raise HTTPException(413, "Settings file too large")
     try:
@@ -1197,7 +1297,7 @@ def _do_update():
 
 
 @app.post("/api/update")
-def start_update(payload: dict = Body()):
+def start_update(payload: dict = Body(), _: None = Keeper):
     if payload.get("confirm") is not True:      # JSON body → CSRF preflight protection
         raise HTTPException(422, "confirm required")
     if not _update_supported():

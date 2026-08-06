@@ -93,10 +93,35 @@ if [[ "$legacy" == true ]]; then
   echo "    Original install backed up to $legacy_backup"
 fi
 
+fresh_config=false
 if [[ ! -f "$project_dir/data/config.json" ]]; then
   source_config="$project_dir/config.json"
   [[ -f "$source_config" ]] || source_config="$project_dir/config.example.json"
   install -o "$run_user" -g "$run_group" "$source_config" "$project_dir/data/config.json"
+  fresh_config=true
+fi
+
+# Give a brand-new install a Head Keeper key, so changing the setup is limited
+# to whoever ran the installer. The dashboard stays readable by the whole house.
+# Only on a fresh config: an existing install keeps whatever it already has, and
+# an upgrade never locks anyone out of a dashboard that used to be open.
+keeper_key=""
+if [[ "$fresh_config" == true ]]; then
+  keeper_key="$(python3 - "$project_dir/data/config.json" <<'PY'
+import json, secrets, sys
+sys.path.insert(0, ".")
+key = "bask_" + secrets.token_urlsafe(18)
+import hashlib
+salt = secrets.token_hex(16)
+digest = hashlib.pbkdf2_hmac("sha256", key.encode(), salt.encode(), 200_000).hex()
+path = sys.argv[1]
+cfg = json.load(open(path))
+cfg["keeper"] = {"salt": salt, "hash": digest, "iterations": 200_000}
+json.dump(cfg, open(path, "w"), indent=2)
+print(key)
+PY
+)" || keeper_key=""
+  [[ -z "$keeper_key" ]] || chown "$run_user:$run_group" "$project_dir/data/config.json"
 fi
 if [[ ! -f "$project_dir/data/readings.db" && -f "$project_dir/readings.db" ]]; then
   sqlite3 "$project_dir/readings.db" ".backup '$project_dir/data/readings.db'"
@@ -119,4 +144,14 @@ echo "────────────────────────�
 echo "  Bask is running at http://${host}.local:8080"
 echo "  Persistent data: $project_dir/data"
 echo "  Back up now:     $project_dir/scripts/backup.sh"
+if [[ -n "$keeper_key" ]]; then
+  echo "────────────────────────────────────────────────────────────"
+  echo "  Head Keeper key:  $keeper_key"
+  echo
+  echo "  Save this now — it is shown once and stored only as a hash."
+  echo "  Anyone in the house can read the dashboard without it."
+  echo "  It is needed to change sensors, enclosures, ranges, and"
+  echo "  integrations. Change it any time under Manage -> Settings,"
+  echo "  including to match your Shed Head Keeper code."
+fi
 echo "────────────────────────────────────────────────────────────"

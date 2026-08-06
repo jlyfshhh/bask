@@ -366,7 +366,78 @@ function openDetailSolo(mac) {
 function closeDetail() { document.getElementById("detail").classList.remove("open"); }
 
 // ── manage overlay ───────────────────────────────────────────
+// ── Head Keeper lock ────────────────────────────────────────────────────────
+// The server enforces this on every setup route regardless of what happens
+// here; the UI just avoids presenting controls that would only 401, and offers
+// somewhere to type the key. With no key configured this is all inert.
+
+let _keeper = { configured: false, unlocked: true };
+let _afterUnlock = null;
+
+async function refreshKeeperState() {
+  try {
+    _keeper = await (await fetch("/api/keeper")).json();
+  } catch {
+    _keeper = { configured: false, unlocked: true };
+  }
+  return _keeper;
+}
+
+function openKeeper(afterUnlock) {
+  _afterUnlock = afterUnlock || null;
+  document.getElementById("keeper-error").textContent = "";
+  const field = document.getElementById("keeper-key");
+  field.value = "";
+  document.getElementById("keeper").classList.add("open");
+  setTimeout(() => field.focus(), 50);
+}
+
+function closeKeeper() {
+  document.getElementById("keeper").classList.remove("open");
+  _afterUnlock = null;
+}
+
+async function submitKeeperUnlock(event) {
+  event.preventDefault();
+  const button = document.getElementById("keeper-submit");
+  const error = document.getElementById("keeper-error");
+  const key = document.getElementById("keeper-key").value;
+  button.disabled = true;
+  error.textContent = "";
+  try {
+    const response = await fetch("/api/keeper/unlock", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ key }),
+    });
+    if (!response.ok) {
+      error.textContent = response.status === 401
+        ? "That key doesn't match."
+        : "Couldn't check that key.";
+      return;
+    }
+    await refreshKeeperState();
+    const next = _afterUnlock;
+    closeKeeper();
+    if (next) await next();
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function lockKeeper() {
+  await fetch("/api/keeper/lock", { method: "POST" });
+  await refreshKeeperState();
+  closeManage();
+}
+
 async function openManage(tab) {
+  await refreshKeeperState();
+  // Locked: ask for the key first, then carry on into the panel they wanted.
+  if (_keeper.configured && !_keeper.unlocked) {
+    openKeeper(() => openManage(tab));
+    return;
+  }
   await loadManageData();
   switchTab(tab || "enclosures");
   document.documentElement.classList.add("modal-open");
@@ -1144,6 +1215,8 @@ function renderSettingsPane() {
       <div id="alerts-setting"></div></div>
     <div class="field"><label>🔄 Updates</label>
       <div id="update-setting"></div></div>
+    <div class="field"><label>🔑 Head Keeper key — who can change this setup</label>
+      <div id="keeper-setting"></div></div>
     <div class="field"><label>💾 Backup — your enclosures, ranges and settings in one file</label>
       <div class="toggle-row">
         <a class="btn" href="/api/config/export" download>⬇ Download backup</a>
@@ -1153,6 +1226,71 @@ function renderSettingsPane() {
              onchange="importSettings(this)"></div>`;
   refreshAlertsUI();
   refreshUpdateUI();
+  renderKeeperSetting();
+}
+
+// ── Head Keeper key management ───────────────────────────────
+function renderKeeperSetting() {
+  const el = document.getElementById("keeper-setting");
+  if (!el) return;
+  if (!_keeper.configured) {
+    el.innerHTML = `
+      <div class="muted-note" style="text-align:left;padding:4px 0">
+        No key set — anyone on your network can change this setup. Setting one
+        keeps the dashboard readable by everyone while limiting changes to you.
+      </div>
+      <div class="keeper-row">
+        <input id="keeper-new" type="password" autocomplete="new-password" placeholder="New Head Keeper key">
+        <button class="btn on" onclick="saveKeeperKey()">Set key</button>
+      </div>
+      <div class="muted-note" style="text-align:left">
+        Using Shed too? Enter the same Head Keeper code and you only have one to remember.
+      </div>
+      <p id="keeper-set-error" class="keeper-error" role="alert"></p>`;
+    return;
+  }
+  el.innerHTML = `
+    <div class="muted-note" style="text-align:left;padding:4px 0">
+      Setup is protected. The dashboard stays open to everyone on your network.
+    </div>
+    <div class="keeper-row">
+      <input id="keeper-new" type="password" autocomplete="new-password" placeholder="New key">
+      <button class="btn" onclick="saveKeeperKey()">Change key</button>
+    </div>
+    <div class="toggle-row" style="margin-top:8px">
+      <button class="btn" onclick="lockKeeper()">🔒 Lock this device</button>
+      <button class="btn danger" onclick="removeKeeperKey()">Remove key</button>
+    </div>
+    <p id="keeper-set-error" class="keeper-error" role="alert"></p>`;
+}
+
+async function saveKeeperKey() {
+  const field = document.getElementById("keeper-new");
+  const error = document.getElementById("keeper-set-error");
+  error.textContent = "";
+  const response = await fetch("/api/keeper/key", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ key: field.value }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    error.textContent = payload.detail || "Couldn't save that key.";
+    return;
+  }
+  field.value = "";
+  await refreshKeeperState();
+  renderKeeperSetting();
+  showToast("Head Keeper key saved");
+}
+
+async function removeKeeperKey() {
+  if (!confirm("Remove the Head Keeper key?\n\nAnyone on your network will be able to change this setup again.")) return;
+  const response = await fetch("/api/keeper/key", { method: "DELETE" });
+  if (!response.ok) { showToast("Couldn't remove the key"); return; }
+  await refreshKeeperState();
+  renderKeeperSetting();
+  showToast("Head Keeper key removed");
 }
 
 // ── Settings restore (import a backup file) ──────────────────

@@ -653,3 +653,23 @@ a.btn { text-decoration: none; }
   .status-banner .sb-batt { margin-left: 0; }
   .status-banner.idle .sb-text { font-size: 1.1rem; }
 }
+
+/* ── Head Keeper key ────────────────────────────────────────────────────── */
+/* Reading Bask stays open to the household; these are the bits that guard
+   changing its setup. */
+.keeper-sheet { max-width: 460px; border-radius: 22px; }
+.sheet-overlay:has(.keeper-sheet) { align-items: center; }
+.keeper-sheet h2 { margin: 0 0 6px; }
+.keeper-note { color: var(--muted); font-size: 0.92rem; margin: 0 0 16px; line-height: 1.5; }
+.keeper-sheet input[type=password],
+.keeper-row input[type=password] {
+  width: 100%; min-height: var(--tap); padding: 0 14px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 12px;
+  color: var(--text); font-size: 1.05rem;
+}
+.keeper-sheet input:focus, .keeper-row input:focus { outline: none; border-color: var(--accent); }
+.keeper-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px; }
+.keeper-row { display: flex; gap: 10px; align-items: center; margin-top: 8px; }
+.keeper-row input { flex: 1; min-width: 0; }
+.keeper-error:empty { display: none; }
+.keeper-error { color: var(--danger); font-size: 0.9rem; margin: 10px 0 0; }
