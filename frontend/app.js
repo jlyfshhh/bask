@@ -861,14 +861,15 @@ function renderThermostatsPane() {
       </div></div>`;
   }).join("");
   document.getElementById("pane-thermostats").innerHTML = `
+    <div class="pane-toolbar"><h2>Animal room devices</h2></div>
+    ${renderHumidifierSettings()}
+    ${renderCieloSettings()}
     <div class="pane-toolbar"><h2>Herpstat thermostats</h2>
       <button class="btn primary" onclick="editThermostat(null)">+ Add</button></div>
     <div class="scan-hint">Monitor Herpstat SpyderWeb thermostats on your network. On each unit, enable its
       <b>web status page</b> so <code>http://&lt;ip&gt;/RAWSTATUS</code> responds, then add its IP here.
       The dashboard strip appears once a unit is added.</div>
-    ${rows || `<div class="muted-note">No thermostats yet. This feature is optional — add one to show the live strip.</div>`}
-    ${renderCieloSettings()}
-    ${renderHumidifierSettings()}`;
+    ${rows || `<div class="muted-note">No thermostats yet. This feature is optional — add one to show the live strip.</div>`}`;
 }
 
 function renderCieloSettings() {

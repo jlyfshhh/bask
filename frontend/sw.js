@@ -1,5 +1,5 @@
 // Bask service worker — makes the dashboard installable + delivers push alerts.
-const CACHE = "bask-v1";
+const CACHE = "bask-v2";
 const SHELL = [
   "/", "/index.html", "/style.css", "/app.js", "/keep.js",
   "/favicon.svg", "/manifest.webmanifest", "/icon-192.png",
