@@ -196,6 +196,19 @@ function buildMessages(data) {
     messages.push(`The room itself is a comfy ${Math.round(climate.temperature)}°${climate.humidity != null ? ` at ${Math.round(climate.humidity)}% humidity` : ""}.`);
   }
 
+  const humidifier = bask.humidifier;
+  if (humidifier?.configured) {
+    const lowWater = humidifier.water_lacks === true || String(humidifier.water_lacks).toLowerCase() === "on";
+    if (lowWater) {
+      messages.push(`The animal-room humidifier needs a water refill. 💧`);
+    } else if (humidifier.error || humidifier.stale || humidifier.online === false) {
+      messages.push(`The animal-room humidifier status needs a quick check.`);
+    } else if (humidifier.humidity != null) {
+      const mode = humidifier.power ? ` and running${humidifier.mode ? ` in ${humidifier.mode} mode` : ""}` : " and currently off";
+      messages.push(`Room humidity is ${Math.round(humidifier.humidity)}%${mode}.`);
+    }
+  }
+
   // ── A warm sign-off so it never reads purely as a status printout ──
   messages.push(rotate([
     hour < 12 ? `Morning, keepers — hope everybody slept well. 🦎`

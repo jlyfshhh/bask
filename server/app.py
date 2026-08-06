@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 sys.path.insert(0, str(Path(__file__).parent.parent / "scanner"))
 import db  # noqa: E402
 from server.cielo import CieloMonitor
+from server.vesync import VeSyncHumidifierMonitor
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("web")
@@ -37,6 +38,8 @@ DATA_DIR = Path(os.environ.get("BASK_DATA_DIR", ROOT))
 CONFIG_PATH = DATA_DIR / "config.json"
 FRONTEND_PATH = ROOT / "frontend"
 cielo = CieloMonitor(DATA_DIR / "cielo-secrets.json")
+humidifier = VeSyncHumidifierMonitor(
+    DATA_DIR / "vesync-secrets.json", DATA_DIR / "vesync-token.json")
 SHED_DISPLAY_URL = os.environ.get("SHED_DISPLAY_URL", "").strip()
 SHED_DISPLAY_TOKEN = os.environ.get("SHED_DISPLAY_TOKEN", "").strip()
 SHED_POLL = 15
@@ -234,11 +237,13 @@ async def lifespan(app: FastAPI):
     db.init_db()
     poller = asyncio.create_task(_herpstat_loop())
     cielo_poller = asyncio.create_task(cielo.loop())
+    humidifier_poller = asyncio.create_task(humidifier.loop())
     notifier = asyncio.create_task(_notify_loop())
     shed_poller = asyncio.create_task(_shed_display_loop())
     yield
     poller.cancel()
     cielo_poller.cancel()
+    humidifier_poller.cancel()
     notifier.cancel()
     shed_poller.cancel()
 
@@ -391,7 +396,8 @@ def _build_dashboard(cfg):
             "day_start_hour": cfg["settings"]["day_start_hour"],
             "day_end_hour": cfg["settings"]["day_end_hour"],
             "thermostats": thermostats,
-            "room_climate": cielo.public_status()}
+            "room_climate": cielo.public_status(),
+            "humidifier": humidifier.public_status()}
 
 
 @app.get("/api/dashboard")
@@ -810,6 +816,52 @@ async def select_cielo_device(payload: CieloDevicePayload):
 @app.delete("/api/cielo")
 async def disconnect_cielo():
     await cielo.clear()
+    return {"ok": True}
+
+
+# ── Levoit/VeSync room humidifier (optional, cloud-polled, read-only) ───────
+
+class VeSyncConnectPayload(BaseModel):
+    username: str = Field(min_length=1, max_length=254)
+    password: str = Field(min_length=1, max_length=512)
+    country_code: str = Field(default="US", min_length=2, max_length=2)
+
+
+class VeSyncDevicePayload(BaseModel):
+    device_id: str = Field(min_length=1, max_length=128)
+
+
+@app.get("/api/vesync")
+def vesync_status():
+    return humidifier.settings_status()
+
+
+@app.post("/api/vesync/connect")
+async def connect_vesync(payload: VeSyncConnectPayload):
+    try:
+        return await humidifier.configure(
+            payload.username, payload.password, payload.country_code)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except Exception:
+        log.exception("VeSync setup failed")
+        raise HTTPException(400, "VeSync rejected that login or could not be reached.")
+
+
+@app.put("/api/vesync/device")
+async def select_vesync_device(payload: VeSyncDevicePayload):
+    try:
+        return await humidifier.select_device(payload.device_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except Exception:
+        log.exception("VeSync humidifier selection failed")
+        raise HTTPException(503, "VeSync could not be reached. Try again later.")
+
+
+@app.delete("/api/vesync")
+async def disconnect_vesync():
+    await humidifier.clear()
     return {"ok": True}
 
 

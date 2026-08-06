@@ -14,6 +14,8 @@ backups/
 # Personal configuration — copy config.example.json to config.json and edit
 config.json
 cielo-secrets.json
+vesync-secrets.json
+vesync-token.json
 *.bak-*
 
 # Editor / OS / tooling

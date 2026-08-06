@@ -36,6 +36,14 @@ if [[ -f "$data_dir/cielo-secrets.json" ]]; then
   copy_private "$data_dir/cielo-secrets.json" "$dest/cielo-secrets.json"
 fi
 
+# Preserve the optional read-only VeSync humidifier connection in private
+# filesystem backups. Portable browser exports continue to omit both files.
+for secret in vesync-secrets.json vesync-token.json; do
+  if [[ -f "$data_dir/$secret" ]]; then
+    copy_private "$data_dir/$secret" "$dest/$secret"
+  fi
+done
+
 if [[ -f "$data_dir/readings.db" ]]; then
   command -v sqlite3 >/dev/null 2>&1 || {
     echo "sqlite3 is required for a consistent live database backup." >&2

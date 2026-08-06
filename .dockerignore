@@ -7,6 +7,8 @@ backups
 venv
 config.json
 cielo-secrets.json
+vesync-secrets.json
+vesync-token.json
 readings.db*
 *.bak-*
 __pycache__

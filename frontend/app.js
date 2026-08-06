@@ -57,6 +57,7 @@ async function refreshDashboard() {
     renderStatusBanner(data);
     renderPeriod(data);
     renderRoomClimate(data.room_climate);
+    renderHumidifier(data.humidifier);
     renderThermostats(data);
     renderGrid(data);
     const t = new Date(data.updated_at * 1000);
@@ -88,6 +89,30 @@ function renderRoomClimate(climate) {
     <span class="rc-reading">${temp}<small>${humidity}</small></span>
     <span class="rc-state">${esc(state)}</span>`;
   el.title = "Cielo Breez room climate — tap to manage";
+}
+
+// Read-only Levoit/VeSync humidifier card. Low water gets an explicit warning;
+// the device never affects enclosure range calculations.
+function renderHumidifier(device) {
+  const el = document.getElementById("room-humidifier");
+  if (!el) return;
+  if (!device?.configured) { el.style.display = "none"; return; }
+  el.style.display = "grid";
+  const unavailable = device.error || device.stale || device.online === false;
+  const lowWater = device.water_lacks === true || String(device.water_lacks).toLowerCase() === "on";
+  el.className = "room-climate humidifier" + (unavailable || lowWater ? " unavailable" : "");
+  const humidity = device.humidity == null ? "—" : `${device.humidity}%`;
+  const state = device.error ? device.error :
+    device.stale ? "Status is stale" :
+    device.online === false ? "Humidifier offline" :
+    lowWater ? "Refill water" :
+    device.power ? `${device.mode || "on"}${device.target_humidity == null ? "" : ` → ${device.target_humidity}%`}` : "off";
+  const level = device.mist_level == null ? "" : `Mist ${device.mist_level}`;
+  el.innerHTML = `
+    <span class="rc-label">${esc(device.name || "Room humidifier")}</span>
+    <span class="rc-reading">${humidity}<small>${esc(level)}</small></span>
+    <span class="rc-state">${esc(state)}</span>`;
+  el.title = "Levoit room humidifier — tap to manage";
 }
 
 function renderSummary(counts) {
@@ -357,13 +382,15 @@ function switchTab(name) {
 }
 
 async function loadManageData() {
-  const [sres, eres, spres, tres, cres] = await Promise.all([
+  const [sres, eres, spres, tres, cres, vres] = await Promise.all([
     api("GET", "/api/sensors"), api("GET", "/api/enclosures"),
     api("GET", "/api/species"), api("GET", "/api/thermostats"), api("GET", "/api/cielo"),
+    api("GET", "/api/vesync"),
   ]);
   _sensors = sres.sensors; _enclosures = eres.enclosures; _species = spres.species;
   _thermostats_cfg = tres.thermostats;
   _cielo = cres;
+  _vesync = vres;
   _settings = sres.settings;
   renderEnclosuresPane();
   renderSensorsPane();
@@ -374,6 +401,7 @@ async function loadManageData() {
 let _settings = {};
 let _thermostats_cfg = [];
 let _cielo = {};
+let _vesync = {};
 
 // ── Enclosures pane ──────────────────────────────────────────
 function renderEnclosuresPane() {
@@ -839,7 +867,8 @@ function renderThermostatsPane() {
       <b>web status page</b> so <code>http://&lt;ip&gt;/RAWSTATUS</code> responds, then add its IP here.
       The dashboard strip appears once a unit is added.</div>
     ${rows || `<div class="muted-note">No thermostats yet. This feature is optional — add one to show the live strip.</div>`}
-    ${renderCieloSettings()}`;
+    ${renderCieloSettings()}
+    ${renderHumidifierSettings()}`;
 }
 
 function renderCieloSettings() {
@@ -935,6 +964,88 @@ async function disconnectCielo() {
   await loadManageData();
   refreshDashboard();
   showToast("Cielo disconnected");
+}
+
+function renderHumidifierSettings() {
+  if (!_vesync.configured) {
+    return `<div class="integration-card">
+      <div class="integration-head"><div><h2>Animal room humidifier</h2>
+        <div class="row-sub">Levoit Classic 300S / VeSync · optional</div></div>
+        <button class="btn primary" onclick="connectVeSync()">Connect</button></div>
+      <p>Show current humidity, power, mode, target, mist level, and low-water status on the dashboard.
+        Bask only reads status; it cannot operate the humidifier.</p>
+      <p class="cloud-note">VeSync cloud connection · updates about every 2 minutes</p>
+    </div>`;
+  }
+  const devices = _vesync.devices || [];
+  const noDevices = devices.length === 0;
+  const options = devices.map(d =>
+    `<option value="${esc(d.id)}" ${d.id === _vesync.selected_device_id ? "selected" : ""}>${esc(d.name)}${d.model ? ` (${esc(d.model)})` : ""}</option>`).join("");
+  const lowWater = _vesync.water_lacks === true || String(_vesync.water_lacks).toLowerCase() === "on";
+  const reading = _vesync.humidity != null
+    ? `${_vesync.humidity}% · ${_vesync.power ? esc(_vesync.mode || "on") : "off"}${lowWater ? " · refill water" : ""}`
+    : (noDevices ? "No supported humidifier found on this VeSync account" : "Waiting for first update…");
+  const statusBad = _vesync.error || _vesync.online === false || noDevices || lowWater;
+  const note = _vesync.error || (noDevices
+    ? "Bask connected, but VeSync did not return a supported humidifier. Confirm the Classic 300S is online in the VeSync app."
+    : "Read-only VeSync cloud connection · updates about every 2 minutes");
+  return `<div class="integration-card">
+    <div class="integration-head"><div><h2>Animal room humidifier</h2>
+      <div class="row-sub"><span class="tdot ${statusBad ? "bad" : "ok"}"></span>
+        ${esc(_vesync.name || "Levoit humidifier")}</div></div>
+      <button class="btn danger sm" onclick="disconnectVeSync()">Disconnect</button></div>
+    <p>${reading}</p>
+    ${devices.length > 1 ? `<div class="field compact"><label>Humidifier</label>
+      <select onchange="selectVeSyncDevice(this.value)"><option value="">Choose a humidifier…</option>${options}</select></div>` : ""}
+    <p class="cloud-note">${esc(note)}</p>
+  </div>`;
+}
+
+function connectVeSync() {
+  openEditor(`
+    <div class="sheet-head"><h2>Connect VeSync humidifier</h2>
+      <button class="close-btn" onclick="closeEditor()">✕</button></div>
+    <div class="scan-hint"><b>Private credential:</b> Bask stores this VeSync login only in its
+      private data directory with owner-only permissions. It is excluded from Git and portable exports.
+      Consider using a dedicated VeSync account shared with the humidifier.</div>
+    <div class="field"><label>VeSync email</label><input type="email" id="vesync-user" autocomplete="username"></div>
+    <div class="field"><label>VeSync password</label><input type="password" id="vesync-pass" autocomplete="current-password"></div>
+    <div class="field"><label>Country code</label><input id="vesync-country" value="US" maxlength="2" autocapitalize="characters"></div>
+    <div id="vesync-result" class="test-result"></div>
+    <div class="form-actions"><button class="btn primary" id="vesync-connect-btn" onclick="saveVeSync()">Connect</button></div>`);
+}
+
+async function saveVeSync() {
+  const user = document.getElementById("vesync-user");
+  const pass = document.getElementById("vesync-pass");
+  const out = document.getElementById("vesync-result");
+  const btn = document.getElementById("vesync-connect-btn");
+  if (!user.value.trim() || !pass.value) return;
+  btn.disabled = true; out.className = "test-result"; out.textContent = "Connecting…";
+  try {
+    await api("POST", "/api/vesync/connect", {
+      username: user.value.trim(), password: pass.value,
+      country_code: document.getElementById("vesync-country").value.trim() || "US",
+    });
+    pass.value = ""; closeEditor(); await loadManageData(); refreshDashboard();
+    showToast("Levoit humidifier connected");
+  } catch (e) {
+    pass.value = ""; out.className = "test-result bad"; out.textContent = e.message; btn.disabled = false;
+  }
+}
+
+async function selectVeSyncDevice(deviceId) {
+  if (!deviceId) return;
+  try {
+    await api("PUT", "/api/vesync/device", { device_id: deviceId });
+    await loadManageData(); refreshDashboard();
+  } catch (e) { showToast(e.message); }
+}
+
+async function disconnectVeSync() {
+  if (!confirm("Disconnect VeSync and remove its saved login and token from this Bask server?")) return;
+  await api("DELETE", "/api/vesync");
+  await loadManageData(); refreshDashboard(); showToast("VeSync humidifier disconnected");
 }
 
 function editThermostat(ip) {

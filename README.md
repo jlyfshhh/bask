@@ -39,6 +39,7 @@ account, or ongoing internet connection.
 - 🔋 **Battery + signal monitoring** — warns before a sensor dies or drops off.
 - 🌡️ **Herpstat thermostat monitoring** *(optional)* — add [Herpstat SpyderWeb](https://www.spyderrobotics.com/) thermostats by IP and see each output's live probe temp, setpoint, output %, and alarms in a compact strip. Hidden entirely until you add one.
 - ❄️ **Animal-room climate** *(optional)* — connect a Cielo Breez Max and see the room temperature, humidity, mini-split mode, and setpoint in a small dashboard-corner card.
+- 💧 **Animal-room humidifier** *(optional)* — connect a Levoit Classic 300S through VeSync and see live humidity, power, mode, target, mist level, and low-water status without giving Bask control of the device.
 - 📲 **Phone alerts** *(optional)* — get a notification on your phone when an enclosure goes out of range or a sensor drops off. Two-minute setup with the free [ntfy](https://ntfy.sh) app; the Pi only sends outbound, so nothing is exposed.
 - 📱 **Installs like an app** — add Bask to your phone or tablet's home screen and it launches fullscreen with its own icon, like a native app.
 - 👆 **Touch-first UI** — built for a wall-mounted touchscreen, with proximity pairing (hold a sensor near the host to add it).
@@ -161,6 +162,14 @@ Cielo permits an API key to be used only once and currently limits generation to
 The integration is deliberately **status-only**: Bask cannot turn the mini-split on/off or change its mode or setpoint. The API key and token are stored in `cielo-secrets.json` inside Bask's private data directory with owner-only file permissions. They are excluded from Git, Docker build context, and portable Manage-page exports. The private `scripts/backup.sh` filesystem archive includes them with owner-only permissions so a full server restore can preserve the integration; protect that archive like any other credential backup.
 
 See Cielo's [Breez Max integration instructions](https://support.cielowigle.com/hc/en-us/articles/40965394269079-How-to-integrate-Home-Assistant-with-Breez-Max) for where to generate a Cielo Connect key.
+
+### Levoit Classic 300S room humidifier (optional)
+
+Go to **⚙ Manage → Thermostats → Animal room humidifier → Connect** and sign in with the VeSync account that owns the humidifier. If the account contains more than one supported humidifier, choose the animal-room device after connecting. A dedicated VeSync account shared with the humidifier is recommended when practical.
+
+Bask shows current humidity, power, mode, target humidity, mist level, connectivity, stale data, and a low-water warning. The integration is deliberately **status-only**: it cannot turn the humidifier on/off or change its settings. VeSync does not provide a supported local connection for this model, so status updates use the VeSync cloud about every two minutes and require internet access.
+
+The account login and reusable token are stored in `vesync-secrets.json` and `vesync-token.json` inside Bask's private data directory with owner-only permissions. Both are excluded from Git, Docker build context, and portable Manage-page exports. The private `scripts/backup.sh` archive includes them so a full server restore can preserve the connection; protect that archive like any other credential backup.
 
 ## Phone alerts (optional)
 
