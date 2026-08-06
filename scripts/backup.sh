@@ -61,6 +61,11 @@ if [[ -f "$data_dir/readings.db" ]]; then
   fi
 fi
 
+# Every file above is written 0600 because the archive can contain the VeSync
+# account password and the Cielo API key. tar obeys the umask, so without this
+# the archive itself lands 0644 and undoes that — create it private, then fill it.
+umask 077
 tar -C "$backup_dir" -czf "$dest.tar.gz" "$(basename "$dest")"
+chmod 600 "$dest.tar.gz"
 rm -rf "$dest"
 echo "$dest.tar.gz"
