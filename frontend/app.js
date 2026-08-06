@@ -1005,9 +1005,11 @@ function connectVeSync() {
   openEditor(`
     <div class="sheet-head"><h2>Connect VeSync humidifier</h2>
       <button class="close-btn" onclick="closeEditor()">✕</button></div>
-    <div class="scan-hint"><b>Private credential:</b> Bask stores this VeSync login only in its
-      private data directory with owner-only permissions. It is excluded from Git and portable exports.
-      Consider using a dedicated VeSync account shared with the humidifier.</div>
+    <div class="scan-hint"><b>Apple/Google sign-in?</b> Third-party VeSync integrations cannot use
+      social sign-in. Create a separate VeSync account with an email and its own password, then use
+      VeSync's device-sharing feature to share the humidifier with it. Never enter your Apple password here.</div>
+    <div class="scan-hint"><b>Private credential:</b> Bask stores this dedicated VeSync login only in its
+      private data directory with owner-only permissions. It is excluded from Git and portable exports.</div>
     <div class="field"><label>VeSync email</label><input type="email" id="vesync-user" autocomplete="username"></div>
     <div class="field"><label>VeSync password</label><input type="password" id="vesync-pass" autocomplete="current-password"></div>
     <div class="field"><label>Country code</label><input id="vesync-country" value="US" maxlength="2" autocapitalize="characters"></div>

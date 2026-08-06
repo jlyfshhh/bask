@@ -165,7 +165,9 @@ See Cielo's [Breez Max integration instructions](https://support.cielowigle.com/
 
 ### Levoit Classic 300S room humidifier (optional)
 
-Go to **⚙ Manage → Thermostats → Animal room humidifier → Connect** and sign in with the VeSync account that owns the humidifier. If the account contains more than one supported humidifier, choose the animal-room device after connecting. A dedicated VeSync account shared with the humidifier is recommended when practical.
+Go to **⚙ Manage → Thermostats → Animal room humidifier → Connect** and sign in with a regular VeSync email/password account that can access the humidifier. If the account contains more than one supported humidifier, choose the animal-room device after connecting.
+
+**If the owner account uses Sign in with Apple or Google:** third-party VeSync libraries cannot use that social-login flow, and you must never enter your Apple/Google password into Bask. Create a separate VeSync account using an email address and a unique VeSync password, then share the humidifier to it using VeSync's family/friend device-sharing feature. Enter only that dedicated account in Bask.
 
 Bask shows current humidity, power, mode, target humidity, mist level, connectivity, stale data, and a low-water warning. The integration is deliberately **status-only**: it cannot turn the humidifier on/off or change its settings. VeSync does not provide a supported local connection for this model, so status updates use the VeSync cloud about every two minutes and require internet access.
 
