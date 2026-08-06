@@ -369,10 +369,14 @@ function closeDetail() { document.getElementById("detail").classList.remove("ope
 async function openManage(tab) {
   await loadManageData();
   switchTab(tab || "enclosures");
+  document.documentElement.classList.add("modal-open");
+  document.body.classList.add("modal-open");
   document.getElementById("manage").classList.add("open");
 }
 function closeManage() {
   document.getElementById("manage").classList.remove("open");
+  document.documentElement.classList.remove("modal-open");
+  document.body.classList.remove("modal-open");
   refreshDashboard();
 }
 function switchTab(name) {

@@ -1,5 +1,5 @@
 // Bask service worker — makes the dashboard installable + delivers push alerts.
-const CACHE = "bask-v2";
+const CACHE = "bask-v3";
 const SHELL = [
   "/", "/index.html", "/style.css", "/app.js", "/keep.js",
   "/favicon.svg", "/manifest.webmanifest", "/icon-192.png",
@@ -16,6 +16,11 @@ self.addEventListener("activate", (e) => {
     caches.keys()
       .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
+      // Installed PWAs can otherwise keep running the old app.js indefinitely
+      // even after this worker replaces its cache. Navigate each open Bask page
+      // once so the freshly activated shell takes effect immediately.
+      .then(() => self.clients.matchAll({ type: "window", includeUncontrolled: true }))
+      .then((clients) => Promise.all(clients.map((client) => client.navigate(client.url))))
   );
 });
 
