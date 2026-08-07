@@ -12,16 +12,38 @@ const NIGHT_FIELDS = ["night_warm_temp_min", "night_warm_temp_max", "night_cool_
                       "night_cool_temp_max", "night_humidity_min", "night_humidity_max"];
 
 // ── helpers ──────────────────────────────────────────────────
-async function api(method, url, body) {
+async function api(method, url, body, _retried) {
   const opt = { method, headers: { "Content-Type": "application/json" } };
   if (body !== undefined) opt.body = JSON.stringify(body);
   const res = await fetch(url, opt);
   if (!res.ok) {
+    // A session can die under you — the Head Keeper key is rotated on another
+    // device, which invalidates every cookie. Rather than a dead-end toast,
+    // ask for the key and replay what you were doing. Once only, so a genuinely
+    // wrong key surfaces its error instead of looping.
+    if (res.status === 401 && !_retried && !url.startsWith("/api/keeper/")) {
+      const unlocked = await promptForKeeperKey();
+      if (unlocked) return api(method, url, body, true);
+    }
     let message = `${method} ${url} -> ${res.status}`;
-    try { message = (await res.json()).detail || message; } catch (_) {}
+    try { const payload = await res.json(); message = payload.error || payload.detail || message; } catch (_) {}
     throw new Error(message);
   }
   return res.status === 204 ? null : res.json();
+}
+
+/** Show the unlock sheet and resolve true once the key is accepted. */
+function promptForKeeperKey() {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (ok) => { if (!settled) { settled = true; resolve(ok); } };
+    openKeeper(async () => done(true));
+    const sheet = document.getElementById("keeper");
+    const observer = new MutationObserver(() => {
+      if (!sheet.classList.contains("open")) { observer.disconnect(); done(false); }
+    });
+    observer.observe(sheet, { attributes: true, attributeFilter: ["class"] });
+  });
 }
 function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, c =>
