@@ -24,5 +24,6 @@ jobs:
           PYTHONPATH="$PWD:$PWD/scanner" python tests/test_vesync.py
           PYTHONPATH="$PWD:$PWD/scanner" python tests/test_keeper.py
           PYTHONPATH="$PWD:$PWD/scanner" python tests/test_keeper_api.py
+          PYTHONPATH="$PWD:$PWD/scanner" python tests/test_hostile_advert.py
       - name: Container build
         run: docker build -t bask:test .
