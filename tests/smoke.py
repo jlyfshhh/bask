@@ -18,7 +18,9 @@ def main() -> None:
         from server.app import dashboard, health, room_dashboard
 
         assert db.DB_PATH == data / "readings.db"
-        assert health() == {"ok": True}
+        # `status` matches Shed's probe so both apps answer the same way;
+        # `ok` stays for anything already reading it.
+        assert health() == {"ok": True, "status": "ok"}
         result = dashboard()
         assert result["enclosures"]
         room = room_dashboard()

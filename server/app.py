@@ -22,6 +22,8 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -258,6 +260,33 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 
+# ── Shared API conventions with Shed ─────────────────────────────────────────
+# Shed returns {"error": "..."} and marks every API response no-store. FastAPI
+# defaults to {"detail": "..."} and no cache headers, so anything reading both
+# apps had to special-case each one. These two hooks bring Bask in line without
+# changing any handler: the error body carries `error` *and* the original
+# `detail`, so existing callers keep working.
+
+# Registered against Starlette's base class so router-raised errors (404s,
+# 405s) get the same shape as the ones handlers raise themselves.
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": exc.detail, "detail": exc.detail},
+        headers={"Cache-Control": "no-store", **(exc.headers or {})},
+    )
+
+
+@app.middleware("http")
+async def no_store_api_responses(request: Request, call_next):
+    """API data is live; only the static frontend should ever be cached."""
+    response = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        response.headers.setdefault("Cache-Control", "no-store")
+    return response
+
+
 # ── Head Keeper key ──────────────────────────────────────────────────────────
 # Reading Bask stays open to the whole home network — it is a wall display.
 # Changing its setup does not. Every mutating route, plus the two reads that
@@ -367,7 +396,8 @@ def health():
     except Exception as exc:
         log.warning("health check failed: %s", exc)
         raise HTTPException(503, "Bask data is unavailable")
-    return {"ok": True}
+    # `status` matches Shed's probe; `ok` is kept for anything already reading it.
+    return {"ok": True, "status": "ok"}
 
 
 # ── Dashboard ────────────────────────────────────────────────────────────────
