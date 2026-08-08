@@ -1,0 +1,6 @@
+# Test-only dependencies. Deliberately separate from requirements.txt so they
+# are not installed into the published image.
+#
+# starlette's TestClient needs an HTTP client at import time; without it
+# tests/test_keeper_api.py cannot even be collected.
+httpx2>=2.9.0
