@@ -1,6 +1,9 @@
 services:
   bask:
-    build: .
+    # A prebuilt multi-architecture image, so installing is a pull rather than a
+    # build on the target machine. To build from this checkout instead:
+    #   docker compose -f compose.yaml -f compose.dev.yaml up -d --build
+    image: ghcr.io/jlyfshhh/bask:${BASK_TAG:-latest}
     container_name: bask
     restart: unless-stopped
     logging:

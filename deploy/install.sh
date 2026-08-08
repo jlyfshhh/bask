@@ -135,9 +135,16 @@ if [[ ! -f "$project_dir/.env" ]]; then
     "$project_dir/.env.example" "$project_dir/.env"
 fi
 
-echo "==> Building and starting Bask"
+echo "==> Downloading and starting Bask"
 cd "$project_dir"
-docker compose up -d --build
+# Bask now runs from a published multi-architecture image, so this is a pull
+# rather than a build on whatever board the keeper is installing onto.
+if ! docker compose pull; then
+  echo "Could not download the Bask image from ghcr.io." >&2
+  echo "Check this machine's internet access and try again." >&2
+  exit 1
+fi
+docker compose up -d
 
 echo
 echo "────────────────────────────────────────────────────────────"

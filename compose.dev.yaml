@@ -1,0 +1,11 @@
+# Build Bask from this checkout instead of pulling the published image.
+#
+#   docker compose -f compose.yaml -f compose.dev.yaml up -d --build
+#
+# Overriding `image` too keeps a locally built container from being mistaken for
+# the published one, so a later `docker compose pull` cannot quietly replace
+# your build with whatever is on the registry.
+services:
+  bask:
+    build: .
+    image: bask-local:dev
