@@ -148,7 +148,16 @@ docker compose up -d
 
 echo
 echo "────────────────────────────────────────────────────────────"
-echo "  Bask is running at http://${host}.local:8080"
+lan_ip="$(ip -4 -o addr show scope global 2>/dev/null | awk '$2 !~ /^(docker|br-|veth|virbr|tun|tap)/ {print $4}' | cut -d/ -f1 \
+  | grep -E '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)' | head -n 1)"
+if [[ -n "$lan_ip" ]]; then
+  # mDNS (.local) is missing on Windows without Bonjour and on many Android
+  # phones; the LAN address works everywhere on the network.
+  echo "  Bask is running at http://${lan_ip}:8080"
+  echo "                  or http://${host}.local:8080"
+else
+  echo "  Bask is running at http://${host}.local:8080"
+fi
 echo "  Persistent data: $project_dir/data"
 echo "  Back up now:     $project_dir/scripts/backup.sh"
 if [[ -n "$keeper_key" ]]; then

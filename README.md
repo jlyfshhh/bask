@@ -102,11 +102,19 @@ snapshot), migrates the settings and history, and starts the container.
 Prefer to set it up yourself? With Docker Engine and the Compose plugin installed:
 
 ```bash
-git clone https://github.com/jlyfshhh/bask.git
-cd bask
-cp .env.example .env
+mkdir -p ~/bask && cd ~/bask
+curl -fsSLO https://raw.githubusercontent.com/jlyfshhh/bask/main/compose.yaml
+curl -fsSL https://raw.githubusercontent.com/jlyfshhh/bask/main/.env.example -o .env
 mkdir -p data backups
-docker compose up -d --build
+docker compose up -d
+```
+
+Bask is published as a prebuilt multi-architecture image, so this downloads a
+container rather than building one. To build from a checkout instead, clone the
+repository and use the dev overlay:
+
+```bash
+docker compose -f compose.yaml -f compose.dev.yaml up -d --build
 ```
 
 On Linux, enable BlueZ's reliable passive scanning mode once:
