@@ -197,17 +197,38 @@ if docker inspect bask --format '{{range .Mounts}}{{println .Source}}{{end}}' \
   exit 1
 fi
 
+healthy=false
+for _ in $(seq 1 60); do
+  health="$(docker inspect bask --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' 2>/dev/null || true)"
+  if [[ "$health" == "healthy" ]]; then
+    healthy=true
+    break
+  fi
+  [[ "$health" != "unhealthy" && "$health" != "exited" && "$health" != "dead" ]] || break
+  sleep 1
+done
+scanner_state="$(docker inspect bask-scanner --format '{{.State.Status}}' 2>/dev/null || true)"
+if [[ "$healthy" != true || "$scanner_state" != "running" ]]; then
+  echo "Bask did not become healthy (web=$health, scanner=${scanner_state:-missing})." >&2
+  docker compose logs --tail=80 >&2 || true
+  docker compose stop >/dev/null 2>&1 || true
+  echo "The installation was stopped instead of reporting a working dashboard." >&2
+  exit 1
+fi
+
 echo
 echo "────────────────────────────────────────────────────────────"
 lan_ip="$(ip -4 -o addr show scope global 2>/dev/null | awk '$2 !~ /^(docker|br-|veth|virbr|tun|tap)/ {print $4}' | cut -d/ -f1 \
   | grep -E '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)' | head -n 1 || true)"
+bask_port="$(sed -n 's/^BASK_PORT=//p' "$project_dir/.env" | tail -n 1)"
+[[ "$bask_port" =~ ^[0-9]+$ ]] || bask_port=8080
 if [[ -n "$lan_ip" ]]; then
   # mDNS (.local) is missing on Windows without Bonjour and on many Android
   # phones; the LAN address works everywhere on the network.
-  echo "  Bask is running at http://${lan_ip}:8080"
-  echo "                  or http://${host}.local:8080"
+  echo "  Bask is running at http://${lan_ip}:${bask_port}"
+  echo "                  or http://${host}.local:${bask_port}"
 else
-  echo "  Bask is running at http://${host}.local:8080"
+  echo "  Bask is running at http://${host}.local:${bask_port}"
 fi
 echo "  Persistent data: $project_dir/data"
 echo "  Back up now:     $project_dir/scripts/backup.sh"

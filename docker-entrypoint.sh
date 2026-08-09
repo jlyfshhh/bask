@@ -16,7 +16,10 @@ if [[ ! -f "$data_dir/config.json" ]]; then
   rm -f "$config_tmp"
 fi
 
-role="${BASK_ROLE:-all}"
+# A direct `docker run` gets the safer web-only role. Production Compose starts
+# the scanner explicitly in its isolated service; `all` remains an opt-in
+# compatibility mode for older local development commands.
+role="${BASK_ROLE:-web}"
 
 case "$role" in
   web)
