@@ -192,7 +192,11 @@ function buildMessages(data) {
 
   // ── The room itself (Cielo, when connected) ──
   const climate = bask.room_climate;
-  if (climate?.configured && climate?.available && climate.temperature != null) {
+  // `available` is not a field Cielo's public_status has ever emitted — it
+  // publishes configured/selected/stale/error plus the device state, where
+  // reachability is `online`. This condition was therefore never true, and the
+  // room-climate line never appeared.
+  if (climate?.configured && climate.online !== false && !climate.stale && climate.temperature != null) {
     messages.push(`The room itself is a comfy ${Math.round(climate.temperature)}°${climate.humidity != null ? ` at ${Math.round(climate.humidity)}% humidity` : ""}.`);
   }
 
