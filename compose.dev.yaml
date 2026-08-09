@@ -9,3 +9,6 @@ services:
   bask:
     build: .
     image: bask-local:dev
+  bask-scanner:
+    build: .
+    image: bask-local:dev

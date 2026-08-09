@@ -11,31 +11,61 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    # Hardening that is verified working on real hardware. Two further steps
-    # from QC-12 are deliberately not here, because I tried both tonight and
-    # each takes the app down:
-    #
-    #   read_only: true   wrangler and miniflare create scratch directories
-    #                     under /app at startup, so the container fails to boot.
-    #   cap_drop: [ALL]   drops CAP_DAC_OVERRIDE, which the root process relies
-    #                     on to write into /data (owned by uid 1000). It
-    #                     crash-loops on EACCES.
-    #
-    # Both need the container running as a dedicated non-root UID with the data
-    # directory owned by it — the same piece of work — rather than being bolted
-    # on separately. Tracked as the remainder of QC-12.
+    # The web service has no Bluetooth mount. Both services run as the
+    # installing user's numeric UID/GID, which keeps bind-mounted data private
+    # without requiring root or CAP_DAC_OVERRIDE in the container.
+    user: "${BASK_UID:-10001}:${BASK_GID:-10001}"
+    read_only: true
+    cap_drop:
+      - ALL
     security_opt:
       - no-new-privileges:true
-    pids_limit: 512
+    pids_limit: 256
+    mem_limit: ${BASK_WEB_MEMORY_LIMIT:-512m}
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=64m,mode=0700
     env_file:
       - .env
     environment:
       BASK_DATA_DIR: /data
-      DBUS_SYSTEM_BUS_ADDRESS: unix:path=/var/run/dbus/system_bus_socket
+      BASK_ROLE: web
     ports:
-      - "${BASK_PORT:-8080}:8080"
+      - "${BASK_BIND_ADDRESS:-0.0.0.0}:${BASK_PORT:-8080}:8080"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ${BASK_DATA_PATH:-./data}:/data
+
+  bask-scanner:
+    image: ghcr.io/jlyfshhh/bask:${BASK_TAG:-latest}
+    container_name: bask-scanner
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    user: "${BASK_UID:-10001}:${BASK_GID:-10001}"
+    group_add:
+      - "${BASK_BLUETOOTH_GID:-113}"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: ${BASK_SCANNER_MEMORY_LIMIT:-256m}
+    network_mode: none
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=32m,mode=0700
+    env_file:
+      - .env
+    environment:
+      BASK_DATA_DIR: /data
+      BASK_ROLE: scanner
+      DBUS_SYSTEM_BUS_ADDRESS: unix:path=/var/run/dbus/system_bus_socket
+    volumes:
+      - ${BASK_DATA_PATH:-./data}:/data
       - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket:ro
+    healthcheck:
+      disable: true

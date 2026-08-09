@@ -31,5 +31,6 @@ jobs:
           PYTHONPATH="$PWD:$PWD/scanner" python tests/test_hostile_advert.py
           PYTHONPATH="$PWD:$PWD/scanner" python tests/test_scanner_limits.py
           PYTHONPATH="$PWD:$PWD/scanner" python tests/test_room_status.py
+          PYTHONPATH="$PWD:$PWD/scanner" python tests/test_container_boundary.py
       - name: Container build
         run: docker build -t bask:test .

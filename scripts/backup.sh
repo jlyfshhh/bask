@@ -15,9 +15,9 @@ copy_private() {
   if [[ -r "$source" ]]; then
     install -m 600 "$source" "$target"
   elif command -v sudo >/dev/null 2>&1; then
-    # Bask's container runs as root so credentials it creates in the bind mount
-    # can be root-owned. Copy through sudo, but hand the backup back to the
-    # invoking keeper and never loosen its permissions.
+    # Older Bask releases ran as root, so credentials they created can still be
+    # root-owned until the next installer migration. Copy through sudo, but
+    # hand the backup back to the invoking keeper and never loosen permissions.
     sudo install -m 600 -o "$(id -u)" -g "$(id -g)" "$source" "$target"
   else
     echo "Cannot read $source. Run this backup as a user with access or install sudo." >&2
