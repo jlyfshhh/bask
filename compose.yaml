@@ -11,6 +11,22 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    # Hardening that is verified working on real hardware. Two further steps
+    # from QC-12 are deliberately not here, because I tried both tonight and
+    # each takes the app down:
+    #
+    #   read_only: true   wrangler and miniflare create scratch directories
+    #                     under /app at startup, so the container fails to boot.
+    #   cap_drop: [ALL]   drops CAP_DAC_OVERRIDE, which the root process relies
+    #                     on to write into /data (owned by uid 1000). It
+    #                     crash-loops on EACCES.
+    #
+    # Both need the container running as a dedicated non-root UID with the data
+    # directory owned by it — the same piece of work — rather than being bolted
+    # on separately. Tracked as the remainder of QC-12.
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 512
     env_file:
       - .env
     environment:
