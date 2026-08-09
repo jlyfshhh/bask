@@ -1192,12 +1192,12 @@ def _clean_str(v, fallback="", limit=64) -> str:
     return str(v)[:limit] if isinstance(v, (str, int, float)) else fallback
 
 
-_SPECIES_NUMERIC_FIELDS = frozenset({
-    "warm_min", "warm_max", "cool_min", "cool_max",
-    "humidity_min", "humidity_max",
-    "night_warm_min", "night_warm_max", "night_cool_min", "night_cool_max",
-    "night_humidity_min", "night_humidity_max",
-})
+# Derive the portable schema from the live API model. A separate handwritten
+# list previously drifted to the obsolete names `warm_min`, `cool_min`, etc.,
+# while every real config uses `warm_temp_min`, `cool_temp_min`, and their night
+# equivalents. CI tested the obsolete names too, so restore silently discarded
+# every real temperature range while reporting success.
+_SPECIES_NUMERIC_FIELDS = frozenset(SpeciesPayload.model_fields) - {"name"}
 
 
 def _validate_import(data: dict) -> dict:
@@ -1231,26 +1231,28 @@ def _validate_import(data: dict) -> dict:
     for sp in data.get("species", []):
         if not (isinstance(sp, dict) and sp.get("id") and sp.get("name")):
             continue
-        cleaned: dict[str, Any] = {"id": _clean_str(sp["id"]), "name": _clean_str(sp["name"])}
-        for key, value in sp.items():
-            if not isinstance(key, str) or key in ("id", "name"):
+        name = _clean_str(sp["name"])
+        ranges: dict[str, float | int | None] = {}
+        for key in _SPECIES_NUMERIC_FIELDS:
+            if key not in sp:
                 continue
-            if key not in _SPECIES_NUMERIC_FIELDS:
-                continue  # unknown fields are dropped rather than carried
+            value = sp[key]
             if value is None:
-                cleaned[key] = None
+                ranges[key] = None
             elif isinstance(value, bool):
-                raise ValueError(f"species '{cleaned['name']}' field {key} must be a number")
+                raise ValueError(f"species '{name}' field {key} must be a number")
             elif isinstance(value, (int, float)):
                 number = float(value)
                 if number != number or number in (float("inf"), float("-inf")):
-                    raise ValueError(f"species '{cleaned['name']}' field {key} is not a finite number")
-                if not (-100 <= number <= 250):
-                    raise ValueError(f"species '{cleaned['name']}' field {key} is out of range")
-                cleaned[key] = value
+                    raise ValueError(f"species '{name}' field {key} is not a finite number")
+                ranges[key] = value
             else:
-                raise ValueError(f"species '{cleaned['name']}' field {key} must be a number, not {type(value).__name__}")
-        out["species"].append(cleaned)
+                raise ValueError(f"species '{name}' field {key} must be a number, not {type(value).__name__}")
+        try:
+            validated = SpeciesPayload(name=name, **ranges).model_dump()
+        except Exception as exc:
+            raise ValueError(f"species '{name}': {exc}") from exc
+        out["species"].append({"id": _clean_str(sp["id"]), **validated})
 
     # Settings and ntfy were copied straight through, bypassing the bounds the
     # live endpoints enforce. Run them through the same models.

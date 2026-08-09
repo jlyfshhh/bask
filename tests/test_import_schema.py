@@ -1,17 +1,25 @@
-"""QC-10: an imported settings file must not be able to crash Bask or point it
-at somewhere it should never connect."""
+"""QC-10: imported settings stay safe and preserve the current Bask schema."""
+import json
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
-from server.app import _validate_import, validated_lan_host  # noqa: E402
+from server.app import _portable_export, _validate_import, validated_lan_host  # noqa: E402
+
+RANGE_FIELDS = (
+    "warm_temp_min", "warm_temp_max", "cool_temp_min", "cool_temp_max",
+    "humidity_min", "humidity_max",
+    "night_warm_temp_min", "night_warm_temp_max",
+    "night_cool_temp_min", "night_cool_temp_max",
+    "night_humidity_min", "night_humidity_max",
+)
 
 BASE = {
     "sensors": [{"mac": "A4:C1:38:00:00:01", "name": "Warm Side"}],
     "enclosures": [{"id": "e1", "name": "Tank", "sensors": []}],
-    "species": [{"id": "s1", "name": "Ball Python", "warm_min": 88, "warm_max": 92}],
+    "species": [{"id": "s1", "name": "Ball Python", "warm_temp_min": 88, "warm_temp_max": 92}],
 }
 
 
@@ -25,8 +33,23 @@ def expect_rejected(payload: dict, why: str) -> None:
 
 def test_a_sound_file_is_accepted():
     out = _validate_import(dict(BASE))
-    assert out["species"][0]["warm_min"] == 88
+    assert out["species"][0]["warm_temp_min"] == 88
     assert out["sensors"][0]["mac"] == "A4:C1:38:00:00:01"
+
+
+def test_current_example_ranges_survive_export_and_restore():
+    """Use the shipped schema, not a second hand-written mock of old fields."""
+    current = json.loads((ROOT / "config.example.json").read_text())
+    restored = _validate_import(_portable_export(current))
+    before = {species["id"]: species for species in current["species"]}
+    after = {species["id"]: species for species in restored["species"]}
+    assert after.keys() == before.keys()
+    for species_id, original in before.items():
+        for field in RANGE_FIELDS:
+            assert after[species_id][field] == original.get(field), (
+                f"{species_id}.{field} changed during export→restore: "
+                f"{original.get(field)!r} → {after[species_id][field]!r}"
+            )
 
 
 def test_non_numeric_species_ranges_are_rejected():
@@ -34,22 +57,22 @@ def test_non_numeric_species_ranges_are_rejected():
     # raised a TypeError the next time the dashboard evaluated that enclosure.
     for bad in ("not-a-number", "88", True, [], {}):
         expect_rejected(
-            {**BASE, "species": [{"id": "s1", "name": "Ball Python", "warm_min": bad}]},
-            f"warm_min={bad!r}",
+            {**BASE, "species": [{"id": "s1", "name": "Ball Python", "warm_temp_min": bad}]},
+            f"warm_temp_min={bad!r}",
         )
 
 
 def test_absurd_or_non_finite_species_ranges_are_rejected():
     for bad in (float("inf"), float("nan"), -500, 1000):
         expect_rejected(
-            {**BASE, "species": [{"id": "s1", "name": "Ball Python", "cool_min": bad}]},
-            f"cool_min={bad!r}",
+            {**BASE, "species": [{"id": "s1", "name": "Ball Python", "cool_temp_min": bad}]},
+            f"cool_temp_min={bad!r}",
         )
 
 
 def test_unknown_species_fields_are_dropped_not_carried():
     out = _validate_import({**BASE, "species": [
-        {"id": "s1", "name": "Ball Python", "warm_min": 88, "surprise": {"nested": "junk"}},
+        {"id": "s1", "name": "Ball Python", "warm_temp_min": 88, "surprise": {"nested": "junk"}},
     ]})
     assert "surprise" not in out["species"][0]
 
