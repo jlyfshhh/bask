@@ -18,7 +18,9 @@ existing record: an upgrade must not invalidate the key the keeper already has.
 from __future__ import annotations
 
 import json
+import os
 import sys
+import uuid
 from pathlib import Path
 
 from server import keeper
@@ -51,12 +53,34 @@ def main(argv: list[str]) -> int:
 
     key = keeper.generate_key()
     config["keeper"] = keeper.ensure_session_secret(keeper.hash_key(key))
+    revision = config.get("_revision", 0)
+    if not isinstance(revision, int) or isinstance(revision, bool) or revision < 0:
+        print("config revision is unreadable; refusing to reset it", file=sys.stderr)
+        return 1
+    config["_revision"] = revision + 1
 
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    fd = None
     try:
-        path.write_text(json.dumps(config, indent=2), encoding="utf-8")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            fd = None
+            json.dump(config, handle, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+        os.chmod(path, 0o600)
     except OSError as exc:
         print(f"could not write {path}: {exc}", file=sys.stderr)
         return 1
+    finally:
+        if fd is not None:
+            os.close(fd)
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
 
     # Prove the record we just wrote actually verifies before telling anyone the
     # key works.

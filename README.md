@@ -235,6 +235,15 @@ What Bask does on its side:
 
 - **No account, and no cloud unless you ask for one** — it never touches a Govee account. Bluetooth is receive-only: Bask listens to the advertisements your sensors already broadcast and never connects, pairs, or advertises itself. The optional Cielo and VeSync integrations are the only parts that reach the internet, and each stores its credentials in its own `0600` file inside the private data directory ([details](#levoit-classic-300s-room-humidifier-optional)). Your `config.json` (sensor IDs + enclosure names) is git-ignored.
 - **Same-origin only** — the API sends no permissive CORS headers, so other websites can't read it or send it cross-origin writes.
+- **Concurrent-edit safe** — every settings change is an atomic, owner-only
+  file replacement guarded by a process-wide lock. The web app carries Bask's
+  current revision with each change; if two phones edit the same snapshot, the
+  stale one gets the latest setup and is asked to retry instead of silently
+  overwriting the other person's work. Custom API clients should load
+  `GET /api/manage-snapshot` and send its `revision` as `X-Bask-Revision` on
+  setup-changing requests (`GET /api/config/revision` is also available).
+  Successful writes return their exact new revision; missing and stale
+  revisions return HTTP `428` and `409`, respectively.
 - **XSS-safe rendering** — all user- and device-provided strings are HTML-escaped, including BLE advertisement names (so a crafted nearby device name can't inject script).
 - **Validated input** — request payloads are length- and range-checked.
 - **Container-isolated** — Bask runs inside its own Docker container. The installer is launched as your normal user and requests `sudo` only for Docker, Bluetooth, and host-service setup. The container receives the host Bluetooth D-Bus socket it needs for scanning, but no other host directories.

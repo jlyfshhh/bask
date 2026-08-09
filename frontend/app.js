@@ -8,12 +8,67 @@ let _species = [];
 let _sensors = [];
 let _enclosures = [];
 let _tempUnit = "F";
+let _configRevision = null;
+let _conflictRecovery = null;
+let _settingsWriteTail = Promise.resolve();
+let _settingsWriteEpoch = 0;
 const NIGHT_FIELDS = ["night_warm_temp_min", "night_warm_temp_max", "night_cool_temp_min",
                       "night_cool_temp_max", "night_humidity_min", "night_humidity_max"];
 
 // ── helpers ──────────────────────────────────────────────────
+const CONFIG_REVISION_HEADER = "X-Bask-Revision";
+const CONFIG_REVISION_APPLIED_HEADER = "X-Bask-Revision-Applied";
+
+class ConfigConflictError extends Error {
+  constructor(message) { super(message); this.name = "ConfigConflictError"; this.conflict = true; }
+}
+
+function configRevisionFrom(response) {
+  const raw = response.headers.get(CONFIG_REVISION_HEADER);
+  if (raw == null) return null;
+  const revision = Number(raw);
+  return Number.isInteger(revision) && revision >= 0 ? revision : null;
+}
+
+async function ensureConfigRevision() {
+  if (_configRevision != null) return;
+  const response = await fetch("/api/config/revision", { cache: "no-store" });
+  if (!response.ok) throw new Error("Could not read the current Bask setup version");
+  const payload = await response.json();
+  if (Number.isInteger(payload.revision) && payload.revision >= 0) {
+    _configRevision = payload.revision;
+  } else {
+    throw new Error("Bask returned an invalid setup version");
+  }
+}
+
+async function recoverConfigConflict() {
+  if (_conflictRecovery) return _conflictRecovery;
+  _conflictRecovery = (async () => {
+    try {
+      // Cancel any settings clicks that were queued against the stale form.
+      _settingsWriteEpoch += 1;
+      closeEditor();
+      await refreshKeeperState();
+      const manage = document.getElementById("manage");
+      if (manage?.classList.contains("open")) await loadManageData();
+      else await refreshDashboard();
+      showToast("Bask changed on another device. Latest setup loaded — try again.");
+    } finally {
+      _conflictRecovery = null;
+    }
+  })();
+  return _conflictRecovery;
+}
+
 async function api(method, url, body, _retried) {
+  method = method.toUpperCase();
+  if (!["GET", "HEAD", "OPTIONS"].includes(method)) await ensureConfigRevision();
   const opt = { method, headers: { "Content-Type": "application/json" } };
+  if (!["GET", "HEAD", "OPTIONS"].includes(method) && _configRevision != null) {
+    opt.headers[CONFIG_REVISION_HEADER] = String(_configRevision);
+  }
+  const sentRevision = _configRevision;
   if (body !== undefined) opt.body = JSON.stringify(body);
   const res = await fetch(url, opt);
   if (!res.ok) {
@@ -27,7 +82,23 @@ async function api(method, url, body, _retried) {
     }
     let message = `${method} ${url} -> ${res.status}`;
     try { const payload = await res.json(); message = payload.error || payload.detail || message; } catch (_) {}
+    if (res.status === 409) {
+      const current = configRevisionFrom(res);
+      if (current != null) _configRevision = current;
+      await recoverConfigConflict();
+      throw new ConfigConflictError(message);
+    }
     throw new Error(message);
+  }
+  if (res.headers.get(CONFIG_REVISION_APPLIED_HEADER) === "true") {
+    const applied = configRevisionFrom(res);
+    // This header is produced only by the strict config-write dependency and
+    // names the transaction just completed, not an arbitrary later GET.
+    if (applied == null || sentRevision == null || applied !== sentRevision + 1) {
+      _configRevision = null;
+      throw new Error("Bask could not confirm the saved setup version");
+    }
+    _configRevision = applied;
   }
   return res.status === 204 ? null : res.json();
 }
@@ -414,7 +485,8 @@ let _afterUnlock = null;
 
 async function refreshKeeperState() {
   try {
-    _keeper = await (await fetch("/api/keeper")).json();
+    const response = await fetch("/api/keeper", { cache: "no-store" });
+    _keeper = await response.json();
   } catch {
     _keeper = { configured: false, unlocked: true };
   }
@@ -495,21 +567,29 @@ function switchTab(name) {
 }
 
 async function loadManageData() {
-  const [sres, eres, spres, tres, cres, vres] = await Promise.all([
-    api("GET", "/api/sensors"), api("GET", "/api/enclosures"),
-    api("GET", "/api/species"), api("GET", "/api/thermostats"), api("GET", "/api/cielo"),
-    api("GET", "/api/vesync"),
+  const [snapshot, cres, vres] = await Promise.all([
+    api("GET", "/api/manage-snapshot"), api("GET", "/api/cielo"), api("GET", "/api/vesync"),
   ]);
-  _sensors = sres.sensors; _enclosures = eres.enclosures; _species = spres.species;
-  _thermostats_cfg = tres.thermostats;
+  applyManageSnapshot(snapshot);
   _cielo = cres;
   _vesync = vres;
-  _settings = sres.settings;
   renderEnclosuresPane();
   renderSensorsPane();
   renderSpeciesPane();
   renderThermostatsPane();
   renderSettingsPane();
+}
+
+function applyManageSnapshot(snapshot) {
+  if (!Number.isInteger(snapshot.revision) || snapshot.revision < 0) {
+    throw new Error("Bask returned an invalid setup snapshot");
+  }
+  // This token belongs to these exact arrays/forms. Background dashboard and
+  // species reads deliberately never advance it while an editor is open.
+  _configRevision = snapshot.revision;
+  _sensors = snapshot.sensors; _enclosures = snapshot.enclosures; _species = snapshot.species;
+  _thermostats_cfg = snapshot.thermostats;
+  _settings = snapshot.settings;
 }
 let _settings = {};
 let _thermostats_cfg = [];
@@ -711,10 +791,13 @@ function closePair() {
   document.getElementById("manage").classList.add("open");
 }
 async function pairLoadEnc() {
-  const [eres, spres] = await Promise.all([
-    api("GET", "/api/enclosures"), api("GET", "/api/species"),
-  ]);
-  _pairEnc = eres.enclosures; _species = spres.species;
+  const snapshot = await api("GET", "/api/manage-snapshot");
+  if (!Number.isInteger(snapshot.revision) || snapshot.revision < 0) {
+    throw new Error("Bask returned an invalid setup snapshot");
+  }
+  _configRevision = snapshot.revision;
+  _pairEnc = snapshot.enclosures;
+  _species = snapshot.species;
 }
 
 async function pairPoll() {
@@ -793,7 +876,7 @@ async function pairAssign(encId, side) {
     _pairNearest = null; renderPairNearest();
     renderPairTargets();
     pairPoll();
-  } catch (e) { showToast("Assign failed — try again"); }
+  } catch (e) { if (!e.conflict) showToast("Assign failed — try again"); }
 }
 async function pairUndo(encId, mac) {
   await api("POST", "/api/unpair", { mac, enclosure_id: encId, position: "" });
@@ -1217,7 +1300,7 @@ async function saveThermostat(ip) {
     if (ip) await api("PUT", `/api/thermostats/${encodeURIComponent(ip)}`, body);
     else await api("POST", "/api/thermostats", body);
   } catch (e) {
-    showToast(ip ? "Save failed" : "That IP is already added");
+    if (!e.conflict) showToast(ip ? "Save failed" : "That IP is already added");
     return;
   }
   closeEditor(); await loadManageData();
@@ -1306,14 +1389,10 @@ async function saveKeeperKey() {
   const field = document.getElementById("keeper-new");
   const error = document.getElementById("keeper-set-error");
   error.textContent = "";
-  const response = await fetch("/api/keeper/key", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ key: field.value }),
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    error.textContent = payload.detail || "Couldn't save that key.";
+  try {
+    await api("POST", "/api/keeper/key", { key: field.value });
+  } catch (e) {
+    if (!e.conflict) error.textContent = e.message || "Couldn't save that key.";
     return;
   }
   field.value = "";
@@ -1324,8 +1403,12 @@ async function saveKeeperKey() {
 
 async function removeKeeperKey() {
   if (!confirm("Remove the Head Keeper key?\n\nAnyone on your network will be able to change this setup again.")) return;
-  const response = await fetch("/api/keeper/key", { method: "DELETE" });
-  if (!response.ok) { showToast("Couldn't remove the key"); return; }
+  try {
+    await api("DELETE", "/api/keeper/key");
+  } catch (e) {
+    if (!e.conflict) showToast("Couldn't remove the key");
+    return;
+  }
   await refreshKeeperState();
   renderKeeperSetting();
   showToast("Head Keeper key removed");
@@ -1344,7 +1427,7 @@ async function importSettings(input) {
     const r = await api("POST", "/api/config/import", data);
     showToast(`Restored ${r.enclosures} enclosures, ${r.sensors} sensors`);
     await loadManageData(); refreshDashboard();
-  } catch (e) { showToast("Restore failed — not a valid Bask backup"); }
+  } catch (e) { if (!e.conflict) showToast("Restore failed — not a valid Bask backup"); }
 }
 
 // ── In-app updates ───────────────────────────────────────────
@@ -1432,10 +1515,11 @@ async function refreshAlertsUI() {
 }
 async function enableAlerts() {
   try { await api("POST", "/api/ntfy", { enabled: true }); refreshAlertsUI(); }
-  catch (e) { showToast("Couldn't turn on alerts"); }
+  catch (e) { if (!e.conflict) showToast("Couldn't turn on alerts"); }
 }
 async function disableAlerts() {
-  try { await api("POST", "/api/ntfy", { enabled: false }); } catch (e) {}
+  try { await api("POST", "/api/ntfy", { enabled: false }); }
+  catch (e) { if (e.conflict) return; }
   showToast("Alerts turned off"); refreshAlertsUI();
 }
 async function testAlert() {
@@ -1451,6 +1535,26 @@ function stepperPlain(key, val, step, unit) {
     <div class="sval">${val} ${unit}</div>
     <button class="step-btn" onclick="stepSetting('${idAttr(key)}',1)">+</button></div>`;
 }
+
+function queueSettingWrite(body, applySavedValue) {
+  const epoch = _settingsWriteEpoch;
+  const run = async () => {
+    if (epoch !== _settingsWriteEpoch) return;
+    try {
+      await api("PUT", "/api/settings", body);
+      if (epoch === _settingsWriteEpoch) applySavedValue();
+    } catch (error) {
+      if (error.conflict) return; // global recovery already reloaded the form
+      _settingsWriteEpoch += 1;   // cancel later clicks based on this failed form
+      showToast("Couldn't save that setting — latest setup reloaded");
+      try { await loadManageData(); } catch (_) {}
+    }
+  };
+  // Both branches keep the queue live after a failed operation.
+  _settingsWriteTail = _settingsWriteTail.then(run, run);
+  return _settingsWriteTail;
+}
+
 async function stepSetting(key, dir) {
   const el = document.getElementById("set-" + key);
   const step = Number(el.dataset.step);
@@ -1458,8 +1562,7 @@ async function stepSetting(key, dir) {
   if (v < step) v = step;
   el.dataset.val = v;
   el.querySelector(".sval").textContent = `${v} ${el.dataset.unit}`;
-  await api("PUT", "/api/settings", { [key]: v });
-  _settings[key] = v;
+  await queueSettingWrite({ [key]: v }, () => { _settings[key] = v; });
 }
 function fmtHourLong(h) {
   const ap = h < 12 ? "AM" : "PM";
@@ -1476,13 +1579,13 @@ async function stepHour(key, dir) {
   const v = (Number(el.dataset.val) + dir + 24) % 24;
   el.dataset.val = v;
   el.querySelector(".sval").textContent = fmtHourLong(v);
-  await api("PUT", "/api/settings", { [key]: v });
-  _settings[key] = v;
+  await queueSettingWrite({ [key]: v }, () => { _settings[key] = v; });
 }
 async function setUnit(u) {
-  await api("PUT", "/api/settings", { temp_unit: u });
-  _settings.temp_unit = u; _tempUnit = u;
-  renderSettingsPane(); renderSpeciesPane();
+  await queueSettingWrite({ temp_unit: u }, () => {
+    _settings.temp_unit = u; _tempUnit = u;
+    renderSettingsPane(); renderSpeciesPane();
+  });
 }
 
 // ── editor sheet plumbing ────────────────────────────────────

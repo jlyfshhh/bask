@@ -77,6 +77,33 @@ def test_unknown_species_fields_are_dropped_not_carried():
     assert "surprise" not in out["species"][0]
 
 
+def test_duplicate_identifiers_are_rejected_after_normalization():
+    for key, entries in (
+        ("enclosures", [
+            {"id": "duplicate", "name": "One", "sensors": []},
+            {"id": "duplicate", "name": "Two", "sensors": []},
+        ]),
+        ("species", [
+            {"id": "duplicate", "name": "One"},
+            {"id": "duplicate", "name": "Two"},
+        ]),
+        ("sensors", [
+            {"mac": "aa:bb:cc:dd:ee:ff", "name": "One"},
+            {"mac": "AA:BB:CC:DD:EE:FF", "name": "Two"},
+        ]),
+    ):
+        payload = {**BASE, key: entries}
+        expect_rejected(payload, f"duplicate normalized {key}")
+
+    # IDs are capped at 64 characters, so distinct uploaded strings that
+    # collide after normalization are duplicates too.
+    prefix = "x" * 64
+    expect_rejected({**BASE, "enclosures": [
+        {"id": prefix + "a", "name": "One", "sensors": []},
+        {"id": prefix + "b", "name": "Two", "sensors": []},
+    ]}, "IDs colliding after length cap")
+
+
 def test_settings_are_held_to_the_same_bounds_as_the_live_endpoint():
     for bad in ({"stale_after_minutes": 0}, {"stale_after_minutes": 99999},
                 {"low_battery_pct": -1}, {"day_start_hour": 24}, {"temp_unit": "K"},

@@ -9,6 +9,7 @@ import asyncio
 import datetime
 import json
 import logging
+import math
 import os
 import secrets
 import shutil
@@ -17,11 +18,12 @@ import sys
 import threading
 import time
 import urllib.request
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 import ipaddress
 import re
-from typing import Any, Literal
+from typing import Any, Callable, Literal, TypeVar
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
@@ -57,8 +59,21 @@ _shed_display: dict = {
 }
 
 
-def load_config() -> dict:
-    cfg = json.loads(CONFIG_PATH.read_text())
+CONFIG_REVISION_KEY = "_revision"
+CONFIG_REVISION_HEADER = "X-Bask-Revision"
+CONFIG_REVISION_APPLIED_HEADER = "X-Bask-Revision-Applied"
+_config_lock = threading.RLock()
+_MutationResult = TypeVar("_MutationResult")
+
+
+def _normalise_config(cfg: dict) -> dict:
+    """Fill schema defaults without writing during a read."""
+    revision = cfg.get(CONFIG_REVISION_KEY, 0)  # missing = pre-QC-19 install
+    if not isinstance(revision, int) or isinstance(revision, bool) or revision < 0:
+        # Silently resetting a damaged revision to zero could make a very old
+        # client token valid again. Fail closed and leave the file untouched.
+        raise ValueError("config revision must be a non-negative integer")
+    cfg[CONFIG_REVISION_KEY] = revision
     cfg.setdefault("enclosures", [])
     cfg.setdefault("sensors", [])
     cfg.setdefault("species", [])
@@ -69,18 +84,119 @@ def load_config() -> dict:
     cfg["settings"].setdefault("day_start_hour", 8)   # heat on  → day ranges
     cfg["settings"].setdefault("day_end_hour", 20)    # heat off → night ranges
     cfg.setdefault("thermostats", [])                 # optional Herpstat SpyderWeb units
-    cfg.setdefault("ntfy", {})                         # opt-in phone alerts via ntfy
+    cfg.setdefault("ntfy", {})                        # opt-in phone alerts via ntfy
     cfg["ntfy"].setdefault("server", "https://ntfy.sh")
     cfg["ntfy"].setdefault("topic", "")
     cfg["ntfy"].setdefault("enabled", False)
-    cfg.setdefault("keeper", {})                       # Head Keeper key, stored hashed
+    cfg.setdefault("keeper", {})                      # Head Keeper key, stored hashed
     return cfg
 
 
-def save_config(cfg: dict) -> None:
-    tmp = CONFIG_PATH.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(cfg, indent=2))
-    tmp.replace(CONFIG_PATH)  # atomic so the scanner never reads a half-written file
+def _load_config_unlocked() -> dict:
+    cfg = _normalise_config(json.loads(CONFIG_PATH.read_text(encoding="utf-8")))
+    # Older installs may have created config.json under a permissive umask.
+    # Merely starting/reading Bask hardens that existing credential-bearing
+    # file; the next atomic replacement preserves these owner-only bits.
+    current_mode = CONFIG_PATH.stat().st_mode & 0o600
+    private_mode = current_mode or 0o600
+    if CONFIG_PATH.stat().st_mode & 0o777 != private_mode:
+        os.chmod(CONFIG_PATH, private_mode)
+    return cfg
+
+
+def load_config() -> dict:
+    """Return one consistent config snapshot.
+
+    Every reader takes the same process-wide lock as writers. This matters
+    because FastAPI runs sync handlers in a thread pool while background tasks
+    read the file at the same time.
+    """
+    with _config_lock:
+        return _load_config_unlocked()
+
+
+def _write_config_unlocked(cfg: dict) -> None:
+    """Durably replace config.json with owner-only permissions.
+
+    The temporary file lives beside the destination so os.replace is atomic.
+    Existing owner read/write bits are preserved, while group/world access is
+    always stripped because the file can contain authentication material.
+    """
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        previous_mode = CONFIG_PATH.stat().st_mode & 0o600
+    except FileNotFoundError:
+        previous_mode = 0
+    mode = previous_mode or 0o600
+    tmp = CONFIG_PATH.with_name(
+        f".{CONFIG_PATH.name}.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex}.tmp")
+    fd = None
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            fd = None
+            json.dump(cfg, handle, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(tmp, mode)
+        os.replace(tmp, CONFIG_PATH)
+        os.chmod(CONFIG_PATH, mode)
+        # Persist the rename as well as the file contents where supported.
+        directory_fd = os.open(DATA_DIR, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        if fd is not None:
+            os.close(fd)
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def mutate_config(expected_revision: int | None,
+                  mutation: Callable[[dict], _MutationResult]) -> _MutationResult:
+    """Apply a complete read-modify-write transaction under one process lock."""
+    with _config_lock:
+        cfg = _load_config_unlocked()
+        current_revision = cfg[CONFIG_REVISION_KEY]
+        if expected_revision is not None and expected_revision != current_revision:
+            raise HTTPException(
+                409,
+                "Bask changed on another device. The latest setup has been reloaded; try again.",
+                headers={CONFIG_REVISION_HEADER: str(current_revision)},
+            )
+        result = mutation(cfg)
+        cfg[CONFIG_REVISION_KEY] = current_revision + 1
+        _write_config_unlocked(cfg)
+        return result
+
+
+def require_config_revision(request: Request) -> int:
+    """Require the revision the editing client actually displayed."""
+    raw = request.headers.get(CONFIG_REVISION_HEADER)
+    if raw is None:
+        raise HTTPException(
+            428,
+            f"This change requires the current {CONFIG_REVISION_HEADER} header. Reload Bask and try again.",
+        )
+    try:
+        revision = int(raw)
+    except (TypeError, ValueError):
+        raise HTTPException(400, f"{CONFIG_REVISION_HEADER} must be a non-negative integer")
+    if revision < 0:
+        raise HTTPException(400, f"{CONFIG_REVISION_HEADER} must be a non-negative integer")
+    # Middleware uses this exact precondition to label a successful transaction
+    # with expected+1. Reading the file after the handler would be racy: another
+    # device could already have advanced it again.
+    request.state.bask_expected_revision = revision
+    return revision
+
+
+ConfigWrite = Depends(require_config_revision)
 
 
 def c_to_f(c: float) -> float:
@@ -286,7 +402,38 @@ async def no_store_api_responses(request: Request, call_next):
     response = await call_next(request)
     if request.url.path.startswith("/api/"):
         response.headers.setdefault("Cache-Control", "no-store")
+        expected = getattr(request.state, "bask_expected_revision", None)
+        if expected is not None and 200 <= response.status_code < 300:
+            # A successful strict config transaction advances exactly once.
+            response.headers[CONFIG_REVISION_HEADER] = str(expected + 1)
+            response.headers[CONFIG_REVISION_APPLIED_HEADER] = "true"
     return response
+
+
+@app.get("/api/config/revision")
+def config_revision(response: Response):
+    """Tiny bootstrap endpoint for a client that has not made a read yet."""
+    revision = load_config()[CONFIG_REVISION_KEY]
+    response.headers[CONFIG_REVISION_HEADER] = str(revision)
+    return {"revision": revision}
+
+
+@app.get("/api/manage-snapshot")
+def manage_snapshot(response: Response):
+    """One coherent, non-secret snapshot for all setup editors."""
+    cfg = load_config()
+    response.headers[CONFIG_REVISION_HEADER] = str(cfg[CONFIG_REVISION_KEY])
+    thermostats = [{**item, "status": _thermostats.get(item.get("ip"), {})}
+                   for item in cfg.get("thermostats", [])]
+    return {
+        "revision": cfg[CONFIG_REVISION_KEY],
+        "sensors": cfg["sensors"],
+        "enclosures": cfg["enclosures"],
+        "species": cfg["species"],
+        "settings": cfg["settings"],
+        "thermostats": thermostats,
+        "temp_unit": cfg["settings"]["temp_unit"],
+    }
 
 
 # ── Head Keeper key ──────────────────────────────────────────────────────────
@@ -349,11 +496,17 @@ def keeper_unlock(payload: KeeperUnlock, response: Response):
     if not keeper.verify_key(payload.key, record):
         raise HTTPException(401, "That key does not match.")
     # Older installs have no signing secret yet; mint one on first unlock.
-    cfg = load_config()
-    keeper.ensure_session_secret(cfg["keeper"])
-    save_config(cfg)
+    if not isinstance(record.get("session_secret"), str):
+        def migrate_legacy_session(cfg: dict) -> dict:
+            current = cfg.get("keeper")
+            if not keeper.verify_key(payload.key, current):
+                raise HTTPException(401, "That key does not match.")
+            keeper.ensure_session_secret(current)
+            return current.copy()
+
+        record = mutate_config(None, migrate_legacy_session)
     response.set_cookie(
-        keeper.COOKIE_NAME, keeper.issue_session(cfg["keeper"]), **keeper.cookie_kwargs())
+        keeper.COOKIE_NAME, keeper.issue_session(record), **keeper.cookie_kwargs())
     return {"ok": True, "configured": True, "unlocked": True}
 
 
@@ -364,7 +517,8 @@ def keeper_lock(response: Response):
 
 
 @app.post("/api/keeper/key")
-def keeper_set_key(payload: KeeperSetKey, request: Request, response: Response):
+def keeper_set_key(payload: KeeperSetKey, request: Request, response: Response,
+                   revision: int = ConfigWrite):
     """
     Set or change the key.
 
@@ -372,32 +526,43 @@ def keeper_set_key(payload: KeeperSetKey, request: Request, response: Response):
     could lock the Head Keeper out of their own dashboard. Setting the first
     key needs no proof, because until then there is nothing to prove.
     """
-    cfg = load_config()
-    record = cfg.get("keeper")
-    if keeper.is_configured(record) and not (
-        keeper.session_is_valid(request.cookies.get(keeper.COOKIE_NAME), record)
-        or keeper.verify_key(payload.current, record)
-    ):
-        raise HTTPException(401, "Enter the current Head Keeper key to change it.")
     try:
         new_key = keeper.validate_new_key(payload.key)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
-    # A fresh record gets a fresh signing secret, so rotating the key ends every
-    # existing session on top of the salt and hash changing under the signature.
-    cfg["keeper"] = keeper.ensure_session_secret(keeper.hash_key(new_key))
-    save_config(cfg)
+
+    def replace_key(cfg: dict) -> dict:
+        record = cfg.get("keeper")
+        if keeper.is_configured(record) and not (
+            keeper.session_is_valid(request.cookies.get(keeper.COOKIE_NAME), record)
+            or keeper.verify_key(payload.current, record)
+        ):
+            raise HTTPException(401, "Enter the current Head Keeper key to change it.")
+        # A fresh record gets a fresh signing secret, so rotating the key ends
+        # every existing session as well as replacing the hash.
+        cfg["keeper"] = keeper.ensure_session_secret(keeper.hash_key(new_key))
+        return cfg["keeper"].copy()
+
+    record = mutate_config(revision, replace_key)
     response.set_cookie(
-        keeper.COOKIE_NAME, keeper.issue_session(cfg["keeper"]), **keeper.cookie_kwargs())
+        keeper.COOKIE_NAME, keeper.issue_session(record), **keeper.cookie_kwargs())
     return {"ok": True, "configured": True, "unlocked": True}
 
 
 @app.delete("/api/keeper/key")
-def keeper_clear_key(request: Request, response: Response, _: None = Keeper):
+def keeper_clear_key(request: Request, response: Response, _: None = Keeper,
+                     revision: int = ConfigWrite):
     """Remove the lock and go back to open. Requires being unlocked already."""
-    cfg = load_config()
-    cfg["keeper"] = {}
-    save_config(cfg)
+    def clear_key(cfg: dict) -> None:
+        # Re-check authorization against the record inside the same critical
+        # section as removal; a concurrent rotation must not be bypassed.
+        record = cfg.get("keeper")
+        if keeper.is_configured(record) and not keeper.session_is_valid(
+                request.cookies.get(keeper.COOKIE_NAME), record):
+            raise HTTPException(401, "Head Keeper key required")
+        cfg["keeper"] = {}
+
+    mutate_config(revision, clear_key)
     response.delete_cookie(keeper.COOKIE_NAME, path="/")
     return {"ok": True, "configured": False, "unlocked": True}
 
@@ -547,6 +712,173 @@ def _build_dashboard(cfg):
             "humidifier": humidifier.public_status()}
 
 
+_ROOM_ENCLOSURE_STATUSES = {
+    "ok", "warning", "danger", "stale", "no_data", "no_ranges",
+}
+_ROOM_COUNT_KEYS = ("ok", "warning", "danger", "stale", "no_data", "no_ranges")
+_ROOM_SHED_TASK_KEYS = (
+    "animalName", "species", "taskType", "title", "details", "dueDate",
+)
+
+
+def _room_number(value: Any) -> int | float | None:
+    """Return a JSON-safe reading, never a bool, string, NaN, or infinity."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return value if math.isfinite(value) else None
+
+
+def _room_count(value: Any) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
+
+
+def _room_text(value: Any, *, limit: int = 500) -> str | None:
+    return value[:limit] if isinstance(value, str) else None
+
+
+def _room_reading(reading: Any) -> dict | None:
+    """Project a sensor down to the two measurements the room UI renders."""
+    if not isinstance(reading, dict):
+        return None
+    projected = {
+        "temp": _room_number(reading.get("temp")),
+        "humidity": _room_number(reading.get("humidity")),
+    }
+    return projected if any(value is not None for value in projected.values()) else None
+
+
+def _room_enclosure(enclosure: Any) -> dict:
+    source = enclosure if isinstance(enclosure, dict) else {}
+    status = source.get("status")
+    if status not in _ROOM_ENCLOSURE_STATUSES:
+        status = "no_data"
+    return {
+        "name": _room_text(source.get("name"), limit=120) or "Unnamed enclosure",
+        "species_name": _room_text(source.get("species_name"), limit=120),
+        "status": status,
+        "warm_temp_ok": source.get("warm_temp_ok") is True,
+        "cool_temp_ok": source.get("cool_temp_ok") is True,
+        "humidity_ok": source.get("humidity_ok") is True,
+        "warm": _room_reading(source.get("warm")),
+        "cool": _room_reading(source.get("cool")),
+    }
+
+
+def _room_error(value: Any) -> bool:
+    """The display only needs to know that an integration has an error."""
+    return bool(value)
+
+
+def _room_climate_status(status: Any) -> dict:
+    source = status if isinstance(status, dict) else {}
+    online = source.get("online")
+    return {
+        "configured": source.get("configured") is True,
+        "online": online if isinstance(online, bool) else None,
+        "stale": source.get("stale") is True,
+        "error": _room_error(source.get("error")),
+        "temperature": _room_number(source.get("temperature")),
+        "humidity": _room_number(source.get("humidity")),
+    }
+
+
+def _room_humidifier_status(status: Any) -> dict:
+    source = status if isinstance(status, dict) else {}
+    online = source.get("online")
+    power = source.get("power")
+    water_lacks = source.get("water_lacks")
+    return {
+        "configured": source.get("configured") is True,
+        "online": online if isinstance(online, bool) else None,
+        "stale": source.get("stale") is True,
+        "error": _room_error(source.get("error")),
+        "humidity": _room_number(source.get("humidity")),
+        "power": power if isinstance(power, bool) else None,
+        "mode": _room_text(source.get("mode"), limit=64),
+        "water_lacks": (
+            water_lacks is True
+            or (isinstance(water_lacks, str) and water_lacks.lower() == "on")
+        ),
+    }
+
+
+def _room_shed_task(task: Any) -> dict | None:
+    if not isinstance(task, dict):
+        return None
+    required_text = ("animalName", "species", "taskType", "title", "dueDate")
+    if any(not isinstance(task.get(key), str) for key in required_text):
+        return None
+    if "details" not in task or (
+            task["details"] is not None and not isinstance(task["details"], str)):
+        return None
+    return {
+        key: _room_text(task[key]) if task[key] is not None else None
+        for key in _ROOM_SHED_TASK_KEYS
+    }
+
+
+def _room_shed_data(data: Any) -> dict | None:
+    if not isinstance(data, dict) or not isinstance(data.get("summary"), dict):
+        return None
+    summary = data["summary"]
+    count_keys = ("total", "completed", "remaining", "overdue")
+    if any(not isinstance(summary.get(key), int) or isinstance(summary.get(key), bool)
+           or summary[key] < 0 for key in count_keys):
+        return None
+    if not isinstance(data.get("tasks"), list) or not isinstance(data.get("overdue"), list):
+        return None
+
+    pending = [_room_shed_task(item) for item in data["tasks"]]
+    overdue = [_room_shed_task(item) for item in data["overdue"]]
+    if any(item is None for item in pending) or any(item is None for item in overdue):
+        return None
+    if (summary["total"] != summary["completed"] + summary["remaining"]
+            or summary["remaining"] != len(pending)
+            or summary["overdue"] != len(overdue)):
+        return None
+
+    return {
+        "summary": {key: summary[key] for key in count_keys},
+        "tasks": pending,
+        "overdue": overdue,
+    }
+
+
+def _room_dashboard_dto(bask_dashboard: Any, shed_display: Any,
+                        *, generated_at: int | None = None) -> dict:
+    """Strict public DTO for Haven's unauthenticated wall-display endpoint.
+
+    This is deliberately an allowlist rather than a copy-and-delete filter.
+    The full dashboard contains sensor MACs/names, RSSI, battery and age data,
+    thermostat IPs/details, internal IDs, and ungrouped devices. Haven does not
+    render any of those fields, so they must not cross this privacy boundary.
+    """
+    bask = bask_dashboard if isinstance(bask_dashboard, dict) else {}
+    shed = shed_display if isinstance(shed_display, dict) else {}
+    enclosures = bask.get("enclosures")
+    counts = bask.get("counts") if isinstance(bask.get("counts"), dict) else {}
+    last_success = shed.get("last_success")
+    shed_data = _room_shed_data(shed.get("data"))
+    return {
+        "generated_at": generated_at if generated_at is not None else int(time.time()),
+        "bask": {
+            "enclosures": [_room_enclosure(item) for item in enclosures]
+            if isinstance(enclosures, list) else [],
+            "counts": {key: _room_count(counts.get(key)) for key in _ROOM_COUNT_KEYS},
+            "room_climate": _room_climate_status(bask.get("room_climate")),
+            "humidifier": _room_humidifier_status(bask.get("humidifier")),
+        },
+        "shed": {
+            "configured": shed.get("configured") is True,
+            # A partial/schema-drifted upstream response must never be turned
+            # into a false zero-task all-clear on the wall display.
+            "available": shed.get("available") is True and shed_data is not None,
+            "last_success": _room_number(last_success),
+            "data": shed_data,
+        },
+    }
+
+
 @app.get("/api/dashboard")
 def dashboard():
     return _build_dashboard(load_config())
@@ -554,12 +886,8 @@ def dashboard():
 
 @app.get("/api/room-dashboard")
 def room_dashboard():
-    """Combined, read-only feed for the attached animal-room display."""
-    return {
-        "generated_at": int(time.time()),
-        "bask": _build_dashboard(load_config()),
-        "shed": _shed_display.copy(),
-    }
+    """Minimal combined, read-only feed for the attached room display."""
+    return _room_dashboard_dto(_build_dashboard(load_config()), _shed_display.copy())
 
 
 # ── Discovery (reads the scanner's table; no BLE here) ───────────────────────
@@ -613,33 +941,36 @@ def list_species():
 
 
 @app.post("/api/species")
-def create_species(payload: SpeciesPayload, _: None = Keeper):
-    cfg = load_config()
-    sp_id = str(int(time.time() * 1000))
-    cfg["species"].append({"id": sp_id, **payload.model_dump()})
-    save_config(cfg)
+def create_species(payload: SpeciesPayload, _: None = Keeper, revision: int = ConfigWrite):
+    sp_id = str(uuid.uuid4())
+    mutate_config(revision, lambda cfg: cfg["species"].append(
+        {"id": sp_id, **payload.model_dump()}))
     return {"ok": True, "id": sp_id}
 
 
 @app.put("/api/species/{sp_id}")
-def update_species(sp_id: str, payload: SpeciesPayload, _: None = Keeper):
-    cfg = load_config()
-    for sp in cfg["species"]:
-        if sp["id"] == sp_id:
-            sp.update(payload.model_dump())
-            save_config(cfg)
-            return {"ok": True}
-    raise HTTPException(404, "Species not found")
+def update_species(sp_id: str, payload: SpeciesPayload, _: None = Keeper,
+                   revision: int = ConfigWrite):
+    def update(cfg: dict) -> None:
+        for species in cfg["species"]:
+            if species["id"] == sp_id:
+                species.update(payload.model_dump())
+                return
+        raise HTTPException(404, "Species not found")
+
+    mutate_config(revision, update)
+    return {"ok": True}
 
 
 @app.delete("/api/species/{sp_id}")
-def delete_species(sp_id: str, _: None = Keeper):
-    cfg = load_config()
-    before = len(cfg["species"])
-    cfg["species"] = [sp for sp in cfg["species"] if sp["id"] != sp_id]
-    if len(cfg["species"]) == before:
-        raise HTTPException(404, "Species not found")
-    save_config(cfg)
+def delete_species(sp_id: str, _: None = Keeper, revision: int = ConfigWrite):
+    def delete(cfg: dict) -> None:
+        before = len(cfg["species"])
+        cfg["species"] = [sp for sp in cfg["species"] if sp["id"] != sp_id]
+        if len(cfg["species"]) == before:
+            raise HTTPException(404, "Species not found")
+
+    mutate_config(revision, delete)
     return {"ok": True}
 
 
@@ -659,6 +990,13 @@ class EnclosurePayload(BaseModel):
 class ReorderPayload(BaseModel):
     order: list[str] = Field(max_length=500)
 
+    @field_validator("order")
+    @classmethod
+    def bounded_ids(cls, order: list[str]) -> list[str]:
+        if any(len(enclosure_id) > 64 for enclosure_id in order):
+            raise ValueError("enclosure IDs may not exceed 64 characters")
+        return order
+
 
 @app.get("/api/enclosures")
 def list_enclosures():
@@ -666,47 +1004,64 @@ def list_enclosures():
 
 
 @app.post("/api/enclosures")
-def create_enclosure(payload: EnclosurePayload, _: None = Keeper):
-    cfg = load_config()
-    enc_id = str(int(time.time() * 1000))
-    cfg["enclosures"].append({
+def create_enclosure(payload: EnclosurePayload, _: None = Keeper,
+                     revision: int = ConfigWrite):
+    enc_id = str(uuid.uuid4())
+    mutate_config(revision, lambda cfg: cfg["enclosures"].append({
         "id": enc_id, "name": payload.name, "species_id": payload.species_id,
         "sensors": [{"mac": s.mac.upper(), "position": s.position} for s in payload.sensors],
-    })
-    save_config(cfg)
+    }))
     return {"ok": True, "id": enc_id}
 
 
 @app.put("/api/enclosures/reorder")
-def reorder_enclosures(payload: ReorderPayload, _: None = Keeper):
-    cfg = load_config()
-    id_to_enc = {e["id"]: e for e in cfg["enclosures"]}
-    cfg["enclosures"] = [id_to_enc[eid] for eid in payload.order if eid in id_to_enc]
-    save_config(cfg)
+def reorder_enclosures(payload: ReorderPayload, _: None = Keeper,
+                       revision: int = ConfigWrite):
+    def reorder(cfg: dict) -> None:
+        current_ids = [enclosure["id"] for enclosure in cfg["enclosures"]]
+        requested = payload.order
+        if (len(requested) != len(current_ids)
+                or len(set(requested)) != len(requested)
+                or set(requested) != set(current_ids)):
+            raise HTTPException(
+                409,
+                "Enclosure order must contain every current enclosure exactly once. Reload and try again.",
+            )
+        by_id = {enclosure["id"]: enclosure for enclosure in cfg["enclosures"]}
+        cfg["enclosures"] = [by_id[enclosure_id] for enclosure_id in requested]
+
+    mutate_config(revision, reorder)
     return {"ok": True}
 
 
 @app.put("/api/enclosures/{enc_id}")
-def update_enclosure(enc_id: str, payload: EnclosurePayload, _: None = Keeper):
-    cfg = load_config()
-    for enc in cfg["enclosures"]:
-        if enc["id"] == enc_id:
-            enc["name"] = payload.name
-            enc["species_id"] = payload.species_id
-            enc["sensors"] = [{"mac": s.mac.upper(), "position": s.position} for s in payload.sensors]
-            save_config(cfg)
-            return {"ok": True}
-    raise HTTPException(404, "Enclosure not found")
+def update_enclosure(enc_id: str, payload: EnclosurePayload, _: None = Keeper,
+                     revision: int = ConfigWrite):
+    def update(cfg: dict) -> None:
+        for enclosure in cfg["enclosures"]:
+            if enclosure["id"] == enc_id:
+                enclosure["name"] = payload.name
+                enclosure["species_id"] = payload.species_id
+                enclosure["sensors"] = [
+                    {"mac": sensor.mac.upper(), "position": sensor.position}
+                    for sensor in payload.sensors
+                ]
+                return
+        raise HTTPException(404, "Enclosure not found")
+
+    mutate_config(revision, update)
+    return {"ok": True}
 
 
 @app.delete("/api/enclosures/{enc_id}")
-def delete_enclosure(enc_id: str, _: None = Keeper):
-    cfg = load_config()
-    before = len(cfg["enclosures"])
-    cfg["enclosures"] = [e for e in cfg["enclosures"] if e["id"] != enc_id]
-    if len(cfg["enclosures"]) == before:
-        raise HTTPException(404, "Enclosure not found")
-    save_config(cfg)
+def delete_enclosure(enc_id: str, _: None = Keeper, revision: int = ConfigWrite):
+    def delete(cfg: dict) -> None:
+        before = len(cfg["enclosures"])
+        cfg["enclosures"] = [e for e in cfg["enclosures"] if e["id"] != enc_id]
+        if len(cfg["enclosures"]) == before:
+            raise HTTPException(404, "Enclosure not found")
+
+    mutate_config(revision, delete)
     return {"ok": True}
 
 
@@ -730,40 +1085,49 @@ def list_sensors():
 
 
 @app.post("/api/sensors")
-def add_sensor(payload: SensorPayload, _: None = Keeper):
-    cfg = load_config()
+def add_sensor(payload: SensorPayload, _: None = Keeper, revision: int = ConfigWrite):
     mac = payload.mac.upper()
-    if any(s["mac"].upper() == mac for s in cfg["sensors"]):
-        raise HTTPException(400, "Sensor already configured")
-    cfg["sensors"].append({"mac": mac, "name": payload.name, "species": payload.species})
-    save_config(cfg)
+
+    def add(cfg: dict) -> None:
+        if any(sensor["mac"].upper() == mac for sensor in cfg["sensors"]):
+            raise HTTPException(400, "Sensor already configured")
+        cfg["sensors"].append({"mac": mac, "name": payload.name, "species": payload.species})
+
+    mutate_config(revision, add)
     return {"ok": True}
 
 
 @app.put("/api/sensors/{mac}")
-def update_sensor(mac: str, payload: SensorUpdate, _: None = Keeper):
-    cfg = load_config()
-    for s in cfg["sensors"]:
-        if s["mac"].upper() == mac.upper():
-            s["name"] = payload.name
-            s["species"] = payload.species
-            save_config(cfg)
-            return {"ok": True}
-    raise HTTPException(404, "Sensor not found")
+def update_sensor(mac: str, payload: SensorUpdate, _: None = Keeper,
+                  revision: int = ConfigWrite):
+    def update(cfg: dict) -> None:
+        for sensor in cfg["sensors"]:
+            if sensor["mac"].upper() == mac.upper():
+                sensor["name"] = payload.name
+                sensor["species"] = payload.species
+                return
+        raise HTTPException(404, "Sensor not found")
+
+    mutate_config(revision, update)
+    return {"ok": True}
 
 
 @app.delete("/api/sensors/{mac}")
-def delete_sensor(mac: str, _: None = Keeper):
-    cfg = load_config()
-    before = len(cfg["sensors"])
+def delete_sensor(mac: str, _: None = Keeper, revision: int = ConfigWrite):
     target = mac.upper()
-    cfg["sensors"] = [s for s in cfg["sensors"] if s["mac"].upper() != target]
-    if len(cfg["sensors"]) == before:
-        raise HTTPException(404, "Sensor not found")
-    # Also unlink it from any enclosure slot it was assigned to.
-    for enc in cfg["enclosures"]:
-        enc["sensors"] = [sl for sl in enc.get("sensors", []) if sl["mac"].upper() != target]
-    save_config(cfg)
+
+    def delete(cfg: dict) -> None:
+        before = len(cfg["sensors"])
+        cfg["sensors"] = [sensor for sensor in cfg["sensors"]
+                          if sensor["mac"].upper() != target]
+        if len(cfg["sensors"]) == before:
+            raise HTTPException(404, "Sensor not found")
+        # Also unlink it from any enclosure slot it was assigned to.
+        for enclosure in cfg["enclosures"]:
+            enclosure["sensors"] = [slot for slot in enclosure.get("sensors", [])
+                                    if slot["mac"].upper() != target]
+
+    mutate_config(revision, delete)
     return {"ok": True}
 
 
@@ -777,7 +1141,7 @@ class PairPayload(BaseModel):
 
 
 @app.post("/api/pair")
-def pair_sensor(payload: PairPayload, _: None = Keeper):
+def pair_sensor(payload: PairPayload, _: None = Keeper, revision: int = ConfigWrite):
     """Assign a discovered sensor to an enclosure slot in one atomic step.
 
     Used by the touch "Pair by proximity" wizard: the user holds a sensor near
@@ -785,43 +1149,52 @@ def pair_sensor(payload: PairPayload, _: None = Keeper):
     record exists, (2) detach the mac from any other enclosure, and (3) put it in
     the chosen position slot, replacing whatever held that position before.
     """
-    cfg = load_config()
     mac = payload.mac.upper()
     pos = payload.position.strip()
     if not pos:
         raise HTTPException(400, "position is required")
-    enc = next((e for e in cfg["enclosures"] if e["id"] == payload.enclosure_id), None)
-    if enc is None:
-        raise HTTPException(404, "Enclosure not found")
 
-    name = (payload.name or f"{enc['name']} {pos}").strip()
-    existing = next((s for s in cfg["sensors"] if s["mac"].upper() == mac), None)
-    if existing:
-        existing["name"] = name
-    else:
-        cfg["sensors"].append({"mac": mac, "name": name, "species": None})
+    def pair(cfg: dict) -> dict:
+        enclosure = next((item for item in cfg["enclosures"]
+                          if item["id"] == payload.enclosure_id), None)
+        if enclosure is None:
+            raise HTTPException(404, "Enclosure not found")
 
-    # A sensor lives in exactly one place — detach it from every enclosure first.
-    for e in cfg["enclosures"]:
-        e["sensors"] = [sl for sl in e.get("sensors", []) if sl["mac"].upper() != mac]
-    # Replace whatever currently holds this position in the target enclosure.
-    enc["sensors"] = [sl for sl in enc.get("sensors", [])
-                      if sl.get("position", "").lower() != pos.lower()]
-    enc["sensors"].append({"mac": mac, "position": pos})
-    save_config(cfg)
-    return {"ok": True, "sensor_name": name, "enclosure": enc["name"], "position": pos}
+        name = (payload.name or f"{enclosure['name']} {pos}").strip()
+        existing = next((sensor for sensor in cfg["sensors"]
+                         if sensor["mac"].upper() == mac), None)
+        if existing:
+            existing["name"] = name
+        else:
+            cfg["sensors"].append({"mac": mac, "name": name, "species": None})
+
+        # A sensor lives in exactly one place — detach it everywhere first.
+        for item in cfg["enclosures"]:
+            item["sensors"] = [slot for slot in item.get("sensors", [])
+                               if slot["mac"].upper() != mac]
+        enclosure["sensors"] = [slot for slot in enclosure.get("sensors", [])
+                                if slot.get("position", "").lower() != pos.lower()]
+        enclosure["sensors"].append({"mac": mac, "position": pos})
+        return {"ok": True, "sensor_name": name,
+                "enclosure": enclosure["name"], "position": pos}
+
+    return mutate_config(revision, pair)
 
 
 @app.post("/api/unpair")
-def unpair_sensor(payload: PairPayload, _: None = Keeper):
+def unpair_sensor(payload: PairPayload, _: None = Keeper, revision: int = ConfigWrite):
     """Remove a sensor from a given enclosure slot (undo a mis-tap in the wizard)."""
-    cfg = load_config()
     mac = payload.mac.upper()
-    enc = next((e for e in cfg["enclosures"] if e["id"] == payload.enclosure_id), None)
-    if enc is None:
-        raise HTTPException(404, "Enclosure not found")
-    enc["sensors"] = [sl for sl in enc.get("sensors", []) if sl["mac"].upper() != mac]
-    save_config(cfg)
+
+    def unpair(cfg: dict) -> None:
+        enclosure = next((item for item in cfg["enclosures"]
+                          if item["id"] == payload.enclosure_id), None)
+        if enclosure is None:
+            raise HTTPException(404, "Enclosure not found")
+        enclosure["sensors"] = [slot for slot in enclosure.get("sensors", [])
+                                if slot["mac"].upper() != mac]
+
+    mutate_config(revision, unpair)
     return {"ok": True}
 
 
@@ -836,12 +1209,16 @@ class SettingsPayload(BaseModel):
 
 
 @app.put("/api/settings")
-def update_settings(payload: SettingsPayload, _: None = Keeper):
-    cfg = load_config()
-    for k, v in payload.model_dump(exclude_none=True).items():
-        cfg["settings"][k] = v
-    save_config(cfg)
-    return {"ok": True, "settings": cfg["settings"]}
+def update_settings(payload: SettingsPayload, _: None = Keeper,
+                    revision: int = ConfigWrite):
+    values = payload.model_dump(exclude_none=True)
+
+    def update(cfg: dict) -> dict:
+        cfg["settings"].update(values)
+        return cfg["settings"].copy()
+
+    settings = mutate_config(revision, update)
+    return {"ok": True, "settings": settings}
 
 
 # ── Herpstat thermostat CRUD (optional feature) ──────────────────────────────
@@ -922,38 +1299,50 @@ def test_thermostat(payload: ThermostatTest, _: None = Keeper):
 
 
 @app.post("/api/thermostats")
-def add_thermostat(payload: ThermostatPayload, _: None = Keeper):
-    cfg = load_config()
+def add_thermostat(payload: ThermostatPayload, _: None = Keeper,
+                   revision: int = ConfigWrite):
     ip = payload.ip.strip()
-    if any(t.get("ip") == ip for t in cfg["thermostats"]):
-        raise HTTPException(400, "Thermostat already added")
-    cfg["thermostats"].append({"ip": ip, "name": payload.name, "enabled": payload.enabled})
-    save_config(cfg)
+
+    def add(cfg: dict) -> None:
+        if any(thermostat.get("ip") == ip for thermostat in cfg["thermostats"]):
+            raise HTTPException(400, "Thermostat already added")
+        cfg["thermostats"].append(
+            {"ip": ip, "name": payload.name, "enabled": payload.enabled})
+
+    mutate_config(revision, add)
     return {"ok": True}
 
 
 @app.put("/api/thermostats/{ip}")
-def update_thermostat(ip: str, payload: ThermostatPayload, _: None = Keeper):
-    cfg = load_config()
+def update_thermostat(ip: str, payload: ThermostatPayload, _: None = Keeper,
+                      revision: int = ConfigWrite):
     new_ip = payload.ip.strip()
-    for t in cfg["thermostats"]:
-        if t.get("ip") == ip:
-            t["ip"], t["name"], t["enabled"] = new_ip, payload.name, payload.enabled
-            save_config(cfg)
-            if new_ip != ip:
-                _thermostats.pop(ip, None)   # drop stale cache under the old IP
-            return {"ok": True}
-    raise HTTPException(404, "Thermostat not found")
+
+    def update(cfg: dict) -> None:
+        for thermostat in cfg["thermostats"]:
+            if thermostat.get("ip") == ip:
+                thermostat["ip"] = new_ip
+                thermostat["name"] = payload.name
+                thermostat["enabled"] = payload.enabled
+                return
+        raise HTTPException(404, "Thermostat not found")
+
+    mutate_config(revision, update)
+    if new_ip != ip:
+        _thermostats.pop(ip, None)   # drop stale cache under the old IP
+    return {"ok": True}
 
 
 @app.delete("/api/thermostats/{ip}")
-def delete_thermostat(ip: str, _: None = Keeper):
-    cfg = load_config()
-    before = len(cfg["thermostats"])
-    cfg["thermostats"] = [t for t in cfg["thermostats"] if t.get("ip") != ip]
-    if len(cfg["thermostats"]) == before:
-        raise HTTPException(404, "Thermostat not found")
-    save_config(cfg)
+def delete_thermostat(ip: str, _: None = Keeper, revision: int = ConfigWrite):
+    def delete(cfg: dict) -> None:
+        before = len(cfg["thermostats"])
+        cfg["thermostats"] = [thermostat for thermostat in cfg["thermostats"]
+                              if thermostat.get("ip") != ip]
+        if len(cfg["thermostats"]) == before:
+            raise HTTPException(404, "Thermostat not found")
+
+    mutate_config(revision, delete)
     _thermostats.pop(ip, None)   # so it disappears from the dashboard immediately
     return {"ok": True}
 
@@ -1062,13 +1451,11 @@ except Exception:  # pragma: no cover - optional dependency
     _QR_OK = False
 
 
-def _ntfy_topic(cfg) -> str:
-    """Return the persisted random topic, creating one on first use."""
-    nt = cfg["ntfy"]
-    if not nt.get("topic"):
-        nt["topic"] = "bask-" + secrets.token_hex(8)
-        save_config(cfg)
-    return nt["topic"]
+def _ntfy_topic(cfg: dict) -> str:
+    topic = cfg["ntfy"].get("topic")
+    if not isinstance(topic, str) or not topic:
+        raise RuntimeError("ntfy topic has not been configured")
+    return topic
 
 
 def _subscribe_url(cfg) -> str:
@@ -1143,23 +1530,32 @@ class NtfyToggle(BaseModel):
 @app.get("/api/ntfy")
 def ntfy_status(_: None = Keeper):
     cfg = load_config()
-    return {"topic": _ntfy_topic(cfg), "server": cfg["ntfy"]["server"],
-            "enabled": cfg["ntfy"]["enabled"], "subscribe_url": _subscribe_url(cfg),
+    # Reading Settings never modifies config. A legacy enabled/no-topic record
+    # is presented as disabled; tapping setup repairs it through ntfy_set.
+    topic = cfg["ntfy"].get("topic", "")
+    subscribe_url = _subscribe_url(cfg) if topic else ""
+    return {"topic": topic, "server": cfg["ntfy"]["server"],
+            "enabled": bool(cfg["ntfy"]["enabled"] and topic),
+            "subscribe_url": subscribe_url,
             "qr": _QR_OK}
 
 
 @app.post("/api/ntfy")
-def ntfy_set(payload: NtfyToggle, _: None = Keeper):
-    cfg = load_config()
-    cfg["ntfy"]["enabled"] = payload.enabled
-    _ntfy_topic(cfg)
-    save_config(cfg)
+def ntfy_set(payload: NtfyToggle, _: None = Keeper, revision: int = ConfigWrite):
+    def update(cfg: dict) -> None:
+        cfg["ntfy"]["enabled"] = payload.enabled
+        if not cfg["ntfy"].get("topic"):
+            cfg["ntfy"]["topic"] = "bask-" + secrets.token_hex(8)
+
+    mutate_config(revision, update)
     return {"ok": True, "enabled": payload.enabled}
 
 
 @app.post("/api/ntfy/test")
 def ntfy_test(_: None = Keeper):
     cfg = load_config()
+    if not cfg["ntfy"].get("topic"):
+        raise HTTPException(400, "Set up phone alerts before sending a test")
     try:
         _ntfy_publish(cfg, "Bask",
                       "Alerts are working — I'll ping you if an enclosure needs attention.", "lizard")
@@ -1174,6 +1570,8 @@ def ntfy_qr(_: None = Keeper):
         raise HTTPException(404, "QR rendering not available")
     import io
     cfg = load_config()
+    if not cfg["ntfy"].get("topic"):
+        raise HTTPException(404, "Set up phone alerts first")
     buf = io.BytesIO()
     segno.make(_subscribe_url(cfg), error="m").save(
         buf, kind="svg", scale=4, border=2, dark="#0d0f15", light="#ffffff")
@@ -1190,6 +1588,14 @@ IMPORT_MAX_BYTES = 512_000
 
 def _clean_str(v, fallback="", limit=64) -> str:
     return str(v)[:limit] if isinstance(v, (str, int, float)) else fallback
+
+
+def _reject_duplicate_values(values, label: str) -> None:
+    seen = set()
+    for value in values:
+        if value in seen:
+            raise ValueError(f"duplicate {label} '{value}'")
+        seen.add(value)
 
 
 # Derive the portable schema from the live API model. A separate handwritten
@@ -1214,6 +1620,8 @@ def _validate_import(data: dict) -> dict:
         {"mac": _clean_str(s.get("mac")).upper(), "name": _clean_str(s.get("name"), "sensor"),
          "species": _clean_str(s.get("species"), None) if s.get("species") is not None else None}
         for s in data.get("sensors", []) if isinstance(s, dict) and s.get("mac")]
+    out["sensors"] = [sensor for sensor in out["sensors"] if sensor["mac"]]
+    _reject_duplicate_values((sensor["mac"] for sensor in out["sensors"]), "sensor MAC")
     out["enclosures"] = []
     for e in data.get("enclosures", []):
         if not (isinstance(e, dict) and e.get("id") and e.get("name")):
@@ -1224,6 +1632,10 @@ def _validate_import(data: dict) -> dict:
                                   "species_id": _clean_str(e.get("species_id"), None)
                                   if e.get("species_id") is not None else None,
                                   "sensors": slots})
+    out["enclosures"] = [enclosure for enclosure in out["enclosures"]
+                         if enclosure["id"] and enclosure["name"]]
+    _reject_duplicate_values(
+        (enclosure["id"] for enclosure in out["enclosures"]), "enclosure ID")
     # Species carried every field the file happened to contain. The range
     # evaluator reads these as numbers, so a string like "warm" survived import
     # and raised a TypeError when the dashboard next evaluated that enclosure.
@@ -1253,6 +1665,8 @@ def _validate_import(data: dict) -> dict:
         except Exception as exc:
             raise ValueError(f"species '{name}': {exc}") from exc
         out["species"].append({"id": _clean_str(sp["id"]), **validated})
+    out["species"] = [species for species in out["species"] if species["id"]]
+    _reject_duplicate_values((species["id"] for species in out["species"]), "species ID")
 
     # Settings and ntfy were copied straight through, bypassing the bounds the
     # live endpoints enforce. Run them through the same models.
@@ -1353,32 +1767,35 @@ def export_config(_: None = Keeper):
 
 
 @app.post("/api/config/import")
-def import_config(payload: dict = Body(), _: None = Keeper):
+def import_config(payload: dict = Body(), _: None = Keeper, revision: int = ConfigWrite):
     if len(json.dumps(payload)) > IMPORT_MAX_BYTES:
         raise HTTPException(413, "Settings file too large")
     try:
         clean = _validate_import(payload)
     except ValueError as e:
         raise HTTPException(422, f"Not a valid Bask settings file: {e}")
-    if CONFIG_PATH.exists():
-        ts = time.strftime("%Y%m%d-%H%M%S")
-        shutil.copy2(CONFIG_PATH, CONFIG_PATH.with_name(f"config.json.bak-{ts}-preimport"))
-    # Authentication is machine-local state, not portable husbandry data.
-    # Replacing the whole config used to drop the keeper block, and a missing
-    # block read as "no key set" — so restoring a backup silently unlocked the
-    # install. The private ntfy topic is preserved for the same reason: it is a
-    # local credential, and an imported file must not be able to set it.
-    current = load_config()
-    if isinstance(current.get("keeper"), dict):
-        clean["keeper"] = current["keeper"]
-    current_ntfy = current.get("ntfy")
-    if isinstance(current_ntfy, dict) and current_ntfy.get("topic"):
-        imported_ntfy = clean.get("ntfy") if isinstance(clean.get("ntfy"), dict) else {}
-        imported_ntfy["topic"] = current_ntfy["topic"]
-        clean["ntfy"] = imported_ntfy
-    save_config(clean)
-    return {"ok": True, "enclosures": len(clean["enclosures"]),
-            "sensors": len(clean["sensors"]), "species": len(clean["species"])}
+
+    def replace(current: dict) -> dict:
+        if CONFIG_PATH.exists():
+            ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+            backup = CONFIG_PATH.with_name(f"config.json.bak-{ts}-preimport")
+            shutil.copy2(CONFIG_PATH, backup)
+            os.chmod(backup, 0o600)
+        # Authentication is machine-local state, not portable husbandry data.
+        # A restore also cannot replace the private ntfy topic.
+        if isinstance(current.get("keeper"), dict):
+            clean["keeper"] = current["keeper"]
+        current_ntfy = current.get("ntfy")
+        if isinstance(current_ntfy, dict) and current_ntfy.get("topic"):
+            imported_ntfy = clean.get("ntfy") if isinstance(clean.get("ntfy"), dict) else {}
+            imported_ntfy["topic"] = current_ntfy["topic"]
+            clean["ntfy"] = imported_ntfy
+        current.clear()
+        current.update(clean)
+        return {"ok": True, "enclosures": len(current["enclosures"]),
+                "sensors": len(current["sensors"]), "species": len(current["species"])}
+
+    return mutate_config(revision, replace)
 
 
 # ── In-app updates ───────────────────────────────────────────────────────────

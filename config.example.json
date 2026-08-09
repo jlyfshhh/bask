@@ -1,4 +1,5 @@
 {
+  "_revision": 0,
   "sensors": [
     { "mac": "A4:C1:38:00:00:01", "name": "Example Warm", "species": null },
     { "mac": "A4:C1:38:00:00:02", "name": "Example Cool", "species": null }
