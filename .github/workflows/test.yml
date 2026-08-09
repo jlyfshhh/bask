@@ -6,12 +6,15 @@ on:
   # Publication depends on this workflow, so a red build cannot ship an image.
   workflow_call:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
           cache: pip
@@ -26,6 +29,7 @@ jobs:
           PYTHONPATH="$PWD:$PWD/scanner" python tests/test_vesync.py
           PYTHONPATH="$PWD:$PWD/scanner" python tests/test_keeper.py
           PYTHONPATH="$PWD:$PWD/scanner" python tests/test_keeper_api.py
+          PYTHONPATH="$PWD:$PWD/scanner" python tests/test_config_concurrency.py
           PYTHONPATH="$PWD:$PWD/scanner" python tests/test_import_schema.py
           PYTHONPATH="$PWD:$PWD/scanner" python tests/test_render_escaping.py
           PYTHONPATH="$PWD:$PWD/scanner" python tests/test_hostile_advert.py
