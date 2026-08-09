@@ -74,6 +74,7 @@ _last_advert = 0.0                   # ts of the most recent advert of any kind
 _known: dict[str, str] = {}          # cached config.json sensors: mac -> name
 _known_read_at = 0.0
 _evict_warned_at = 0.0
+_evict_reported = 0
 
 _stats = {
     "adverts": 0,          # matching adverts accepted
@@ -256,9 +257,12 @@ def flush_once() -> int:
 
     rows = [(mac, row) for mac, row in _known_seen.items() if mac in _dirty]
     rows += [(mac, row) for mac, row in _discovery.items() if mac in _dirty]
-    _dirty.clear()
     db.flush_discovered(rows, int(now), configured=set(known),
                         max_unconfigured=DISCOVERY_MAX)
+    # A transient SQLite failure must leave these addresses dirty so the next
+    # pass retries them. Clearing before the write silently lost the only
+    # pending copy and left discovery stale until each device advertised again.
+    _dirty.difference_update(mac for mac, _ in rows)
 
     _stats["rows_written"] += len(rows)
     _stats["flushes"] += 1
@@ -267,11 +271,15 @@ def flush_once() -> int:
                             for m, r in current[:3])
         log.info(f"flushed {len(current)} configured, {len(rows)} rows, "
                  f"{len(_discovery)} in discovery — {preview}")
-    global _evict_warned_at
-    if _stats["evicted_cap"] and now - _evict_warned_at >= EVICT_WARN_INTERVAL:
+    global _evict_warned_at, _evict_reported
+    if (_stats["evicted_cap"] > _evict_reported
+            and now - _evict_warned_at >= EVICT_WARN_INTERVAL):
         _evict_warned_at = now
-        log.warning(f"discovery cache at capacity: {_stats['evicted_cap']} address(es) "
-                    f"evicted since start — something nearby is rotating its address")
+        newly_evicted = _stats["evicted_cap"] - _evict_reported
+        _evict_reported = _stats["evicted_cap"]
+        log.warning(f"discovery cache at capacity: {newly_evicted} new address(es) "
+                    f"evicted ({_evict_reported} since start) — something nearby is "
+                    "rotating its address")
     return len(rows)
 
 

@@ -378,6 +378,42 @@ def test_counters_report_what_was_dropped():
               f"{c['evicted_ttl']} on TTL, {c['rows_written']} rows written")
 
 
+def test_a_failed_discovery_flush_is_retried():
+    with tempfile.TemporaryDirectory() as tmp:
+        sc, dbm, clock = setup(tmp)
+        mac = rotating(1234)
+        sc._on_advert(Device(mac), Adv(payload()))
+        assert mac in sc._dirty
+
+        real_flush = dbm.flush_discovered
+        attempts = 0
+
+        def fail_once(*args, **kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise OSError("simulated transient SQLite failure")
+            return real_flush(*args, **kwargs)
+
+        dbm.flush_discovered = fail_once
+        try:
+            try:
+                sc.flush_once()
+            except OSError:
+                pass
+            else:
+                raise AssertionError("the simulated database failure did not escape")
+
+            assert mac in sc._dirty, "a failed write cleared the only pending copy"
+            assert row_count(dbm, "discovered") == 0
+            assert sc.flush_once() == 1
+            assert mac not in sc._dirty
+            assert row_count(dbm, "discovered") == 1
+        finally:
+            dbm.flush_discovered = real_flush
+        print("  a failed discovery write stays dirty and succeeds on retry")
+
+
 def main() -> None:
     tests = [
         test_a_rotating_address_flood_cannot_grow_memory_or_the_database,
@@ -388,6 +424,7 @@ def main() -> None:
         test_a_newly_configured_address_leaves_the_bounded_cache,
         test_names_and_readings_are_bounded_before_they_reach_sqlite,
         test_counters_report_what_was_dropped,
+        test_a_failed_discovery_flush_is_retried,
     ]
     failures = 0
     for fn in tests:
