@@ -69,6 +69,7 @@ h2 { margin-bottom: 0; font-size: clamp(25px, 2.75vh, 40px); letter-spacing: -.0
 #date { margin: 10px 0 0; color: var(--muted); font-size: clamp(16px, 1.6vh, 24px); }
 .connection { margin-bottom: 13px; color: var(--muted); font-size: clamp(14px, 1.3vh, 19px); font-weight: 700; text-transform: uppercase; letter-spacing: .12em; }
 .connection span { display: inline-block; width: 12px; height: 12px; margin-right: 9px; border-radius: 50%; background: var(--green); box-shadow: 0 0 18px var(--green); }
+.connection.degraded span { background: var(--amber); box-shadow: 0 0 18px var(--amber); }
 .connection.offline span { background: var(--red); box-shadow: 0 0 18px var(--red); }
 
 .dashboard-grid {
@@ -143,6 +144,8 @@ h2 { margin-bottom: 0; font-size: clamp(25px, 2.75vh, 40px); letter-spacing: -.0
 .enclosure.warning { border-left-color: var(--amber); background: rgba(154, 106, 26, .08); }
 .enclosure.danger { border-left-color: var(--red); background: rgba(150, 49, 43, .1); }
 .enclosure.stale, .enclosure.no_data { border-left-color: #647168; opacity: .78; }
+.shed-panel.degraded { border-color: rgba(242, 190, 92, .45); }
+.degraded-message { color: #f2d49a; line-height: 1.55; }
 .enc-head { display: flex; justify-content: space-between; gap: 10px; }
 .enc-head h3 { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: clamp(21px, 2.5vh, 37px); letter-spacing: -.035em; line-height: 1; }
 .status-dot { flex: 0 0 auto; width: clamp(13px, 1.3vh, 19px); height: clamp(13px, 1.3vh, 19px); margin-top: 3px; border-radius: 50%; background: #647168; }

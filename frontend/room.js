@@ -1,6 +1,80 @@
 const $ = (selector) => document.querySelector(selector);
 let latest = null;
 
+function number(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function ageLabel(timestamp, nowSeconds = Math.floor(Date.now() / 1000)) {
+  if (timestamp == null || timestamp === "" || !Number.isFinite(Number(timestamp))) return "no successful sync yet";
+  const seconds = Math.max(0, nowSeconds - Number(timestamp));
+  if (seconds < 60) return "less than a minute ago";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+}
+
+/**
+ * One source-of-truth for the banner, headline, ticker, and task panel.
+ * A cached Shed payload is useful diagnostic state, but it is not live data.
+ */
+function dashboardState(data, nowSeconds = Math.floor(Date.now() / 1000)) {
+  const counts = data?.bask?.counts || {};
+  const alert = number(counts.warning) + number(counts.danger);
+  const stale = number(counts.stale);
+  const noData = number(counts.no_data);
+  const unconfigured = number(counts.no_ranges);
+  const uncertain = stale + noData + unconfigured;
+  const green = number(counts.ok);
+  const shed = data?.shed || {};
+
+  let shedStatus = "live";
+  if (!shed.configured) shedStatus = "unconfigured";
+  else if (!shed.available) shedStatus = shed.data ? "stale" : "offline";
+  else if (!shed.data) shedStatus = "syncing";
+
+  let climatePart;
+  if (alert && uncertain) {
+    climatePart = `${alert} climate alert${alert === 1 ? "" : "s"} · ${uncertain} waiting for data or setup`;
+  } else if (alert) {
+    climatePart = `${alert} enclosure${alert === 1 ? "" : "s"} need climate attention`;
+  } else if (uncertain) {
+    climatePart = `${uncertain} enclosure${uncertain === 1 ? " is" : "s are"} waiting for data or setup`;
+  } else if (green) {
+    climatePart = "All configured climate targets look good";
+  } else {
+    climatePart = "No enclosure climate status is available";
+  }
+
+  let carePart;
+  if (shedStatus === "live") {
+    const remaining = Number(shed.data?.summary?.remaining);
+    carePart = Number.isFinite(remaining)
+      ? `${remaining} care task${remaining === 1 ? "" : "s"} remaining`
+      : "Shed is syncing";
+  } else if (shedStatus === "stale") {
+    carePart = `Shed unavailable · last synced ${ageLabel(shed.last_success, nowSeconds)}`;
+  } else if (shedStatus === "offline") {
+    carePart = "Shed unavailable · no successful sync yet";
+  } else if (shedStatus === "unconfigured") {
+    carePart = "Shed is not connected";
+  } else {
+    carePart = "Shed is syncing";
+  }
+
+  let connection = { className: "", label: "Live" };
+  if (shedStatus === "unconfigured") connection = { className: "degraded", label: "Bask only" };
+  else if (shedStatus === "stale" || shedStatus === "offline") connection = { className: "degraded", label: "Shed offline" };
+  else if (shedStatus === "syncing") connection = { className: "degraded", label: "Syncing" };
+  else if (stale || noData) connection = { className: "degraded", label: "Waiting on data" };
+  else if (unconfigured) connection = { className: "degraded", label: "Setup needed" };
+
+  return { alert, stale, noData, unconfigured, uncertain, green, shedStatus,
+    climatePart, carePart, connection };
+}
+
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (char) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;",
@@ -28,11 +102,12 @@ function formatReading(sensor, kind) {
 
 function renderBask(bask) {
   const counts = bask.counts || {};
-  const attention = (counts.warning || 0) + (counts.danger || 0) + (counts.stale || 0);
+  const alert = number(counts.warning) + number(counts.danger);
+  const waiting = number(counts.stale) + number(counts.no_data) + number(counts.no_ranges);
   $("#bask-counts").innerHTML = `
     <div class="metric good"><strong>${counts.ok || 0}</strong><span>Green</span></div>
-    <div class="metric attention"><strong>${attention}</strong><span>Attention</span></div>
-    <div class="metric offline"><strong>${counts.no_data || 0}</strong><span>No data</span></div>`;
+    <div class="metric attention"><strong>${alert}</strong><span>Alert</span></div>
+    <div class="metric offline"><strong>${waiting}</strong><span>Waiting</span></div>`;
 
   $("#enclosures").innerHTML = (bask.enclosures || []).map((enc) => {
     const warmBad = enc.warm && !enc.warm_temp_ok;
@@ -53,14 +128,25 @@ function renderBask(bask) {
 }
 
 function renderShed(shed) {
+  const panel = document.querySelector(".shed-panel");
+  const reset = (message) => {
+    panel?.classList.add("degraded");
+    $("#task-ring strong").textContent = "—";
+    $("#task-progress").style.width = "0%";
+    $("#task-metrics").innerHTML = "";
+    $("#task-list").innerHTML = `<div class="empty degraded-message">${message}</div>`;
+  };
   if (!shed.configured) {
-    $("#task-list").innerHTML = `<div class="empty">Connect Shed to show today’s care.</div>`;
+    reset("Connect Shed to show today’s care.");
     return;
   }
-  if (!shed.data) {
-    $("#task-list").innerHTML = `<div class="empty">Shed is temporarily unavailable.<br>Sensor monitoring is still live.</div>`;
+  if (!shed.available || !shed.data) {
+    const last = shed.last_success ? `<br>Last successful sync: ${escapeHtml(ageLabel(shed.last_success))}.` : "";
+    reset(`Shed is temporarily unavailable.${last}<br>Last-known tasks are hidden so they are not mistaken for live care.`);
     return;
   }
+
+  panel?.classList.remove("degraded");
 
   const data = shed.data;
   const summary = data.summary;
@@ -154,7 +240,8 @@ function buildMessages(data) {
   }
 
   // ── Care, in plain language ──
-  const shed = data.shed?.data;
+  const state = dashboardState(data);
+  const shed = state.shedStatus === "live" ? data.shed?.data : null;
   if (shed) {
     const { remaining, overdue, completed, total } = shed.summary;
     const tasks = shed.tasks || [];
@@ -187,7 +274,8 @@ function buildMessages(data) {
       .map((task) => task.animalName));
     if (hungry) messages.push(`Still owe dinner to ${hungry}.`);
   } else if (data.shed?.configured) {
-    messages.push(`Shed's catching its breath — the sensors are still keeping watch, though.`);
+    const last = data.shed.last_success ? ` Last successful sync was ${ageLabel(data.shed.last_success)}.` : "";
+    messages.push(`Shed's unavailable right now — cached care tasks are hidden.${last}`);
   }
 
   // ── The room itself (Cielo, when connected) ──
@@ -237,14 +325,10 @@ function render(data) {
     track.innerHTML = tickerHtml;
     track.dataset.content = tickerHtml;
   }
-  const counts = data.bask.counts || {};
-  const attention = (counts.warning || 0) + (counts.danger || 0);
-  const remaining = data.shed?.data?.summary?.remaining;
-  const climatePart = attention ? `${attention} enclosure${attention === 1 ? "" : "s"} need attention` : "Climate targets look good";
-  const carePart = Number.isFinite(remaining) ? `${remaining} care task${remaining === 1 ? "" : "s"} remaining` : "Shed status unavailable";
-  $("#summary").textContent = `${climatePart} · ${carePart}`;
-  $("#connection").classList.remove("offline");
-  $("#connection").innerHTML = "<span></span> Live";
+  const state = dashboardState(data);
+  $("#summary").textContent = `${state.climatePart} · ${state.carePart}`;
+  $("#connection").className = `connection ${state.connection.className}`.trim();
+  $("#connection").innerHTML = `<span></span> ${escapeHtml(state.connection.label)}`;
   $("#last-updated").textContent = `Updated ${new Date(data.generated_at * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
 }
 
@@ -261,7 +345,13 @@ async function refresh() {
   }
 }
 
-updateClock();
-refresh();
-setInterval(updateClock, 1000);
-setInterval(refresh, 15000);
+if (typeof document !== "undefined") {
+  updateClock();
+  refresh();
+  setInterval(updateClock, 1000);
+  setInterval(refresh, 15000);
+}
+
+if (typeof module !== "undefined") {
+  module.exports = { ageLabel, dashboardState, buildMessages };
+}
