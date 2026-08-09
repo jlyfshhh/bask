@@ -187,6 +187,24 @@ def main() -> None:
         assert blocked.get("/api/dashboard").status_code == 200, "reads stay open"
         print("  a corrupt keeper record refuses writes instead of opening them")
 
+        # ── Upgrading an install that predates signed sessions ───────────────
+        # This is the live migration path: a record with salt and hash but no
+        # session_secret. If unlocking did not mint one, the keeper would be
+        # locked out of their own dashboard by an update.
+        legacy = json.loads((data / "config.json").read_text(encoding="utf-8"))
+        legacy["keeper"] = {k: v for k, v in stored["keeper"].items() if k != "session_secret"}
+        assert "session_secret" not in legacy["keeper"]
+        (data / "config.json").write_text(json.dumps(legacy), encoding="utf-8")
+
+        upgraded = TestClient(app)
+        assert upgraded.put("/api/settings", json={"temp_unit": "C"}).status_code == 401
+        assert upgraded.post("/api/keeper/unlock", json={"key": "export-audit-key"}).status_code == 200
+        after_unlock = json.loads((data / "config.json").read_text(encoding="utf-8"))
+        assert after_unlock["keeper"].get("session_secret"), "unlocking must mint a signing secret"
+        assert upgraded.put("/api/settings", json={"temp_unit": "C"}).status_code == 200, \
+            "the existing key must still work after upgrading"
+        print("  an install predating signed sessions upgrades on first unlock")
+
     print("Head Keeper API tests passed.")
 
 
