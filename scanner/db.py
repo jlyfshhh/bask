@@ -98,8 +98,20 @@ def flush_readings(current: list[tuple[str, dict]], last_history: dict, history_
         conn.execute("DELETE FROM history WHERE recorded_at < ?", (int(time.time()) - 86400,))
 
 
-def flush_discovered(items: list[tuple[str, dict]], now: int) -> None:
-    """Upsert every currently-seen Govee device and prune ones gone for 5 min."""
+def flush_discovered(items: list[tuple[str, dict]], now: int, configured: set[str] | None = None,
+                     max_unconfigured: int | None = None) -> None:
+    """Upsert the devices seen since the last flush and prune ones gone for 5 min.
+
+    `items` is only the rows that changed — a full re-upsert of everything the
+    scanner is holding would refresh `last_seen` on every row and the age prune
+    below could never remove anything.
+
+    `max_unconfigured` additionally caps how many non-configured devices the
+    table may hold, keeping the newest by `last_seen`. Age alone is not a bound:
+    a device rotating its address emits an unlimited number of distinct rows
+    inside any one prune window. Devices in `configured` are exempt from the cap
+    (never from the age prune — a sensor out of range should leave the list).
+    """
     with get_conn() as conn:
         for mac, d in items:
             conn.execute("""
@@ -110,6 +122,20 @@ def flush_discovered(items: list[tuple[str, dict]], now: int) -> None:
                     battery=excluded.battery, rssi=excluded.rssi, last_seen=excluded.last_seen
             """, (mac, d["name"], d["temp_c"], d["humidity"], d["battery"], d["rssi"], int(d["ts"])))
         conn.execute("DELETE FROM discovered WHERE last_seen < ?", (now - 300,))
+        if max_unconfigured is not None:
+            exempt = sorted(configured or ())
+            keep = "" if not exempt else \
+                f" WHERE mac NOT IN ({','.join('?' * len(exempt))})"
+            # ORDER BY ... , mac makes the survivors identical for identical
+            # input, so the cap behaves the same on every run.
+            conn.execute(
+                f"""DELETE FROM discovered WHERE mac IN (
+                        SELECT mac FROM discovered{keep}
+                        ORDER BY last_seen DESC, mac ASC
+                        LIMIT -1 OFFSET ?
+                    )""",
+                (*exempt, max(0, max_unconfigured)),
+            )
 
 
 # ── Reader side (web server) ─────────────────────────────────────────────────
