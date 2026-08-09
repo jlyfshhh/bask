@@ -105,23 +105,32 @@ fi
 # to whoever ran the installer. The dashboard stays readable by the whole house.
 # Only on a fresh config: an existing install keeps whatever it already has, and
 # an upgrade never locks anyone out of a dashboard that used to be open.
+bask_image="${BASK_IMAGE:-ghcr.io/jlyfshhh/bask:${BASK_TAG:-latest}}"
+
 keeper_key=""
 if [[ "$fresh_config" == true ]]; then
-  keeper_key="$(python3 - "$project_dir/data/config.json" <<'PY'
-import json, secrets, sys
-sys.path.insert(0, ".")
-key = "bask_" + secrets.token_urlsafe(18)
-import hashlib
-salt = secrets.token_hex(16)
-digest = hashlib.pbkdf2_hmac("sha256", key.encode(), salt.encode(), 200_000).hex()
-path = sys.argv[1]
-cfg = json.load(open(path))
-cfg["keeper"] = {"salt": salt, "hash": digest, "iterations": 200_000}
-json.dump(cfg, open(path, "w"), indent=2)
-print(key)
-PY
-)" || keeper_key=""
-  [[ -z "$keeper_key" ]] || chown "$run_user:$run_group" "$project_dir/data/config.json"
+  # The bootstrap below runs in the image, so make sure it is here first. The
+  # compose pull later is a no-op once this has run.
+  if ! docker image inspect "$bask_image" >/dev/null 2>&1; then
+    docker pull "$bask_image" || {
+      echo "Could not download $bask_image." >&2
+      exit 1
+    }
+  fi
+  # Run inside the published image, which has Python and the real keeper module.
+  # This used to be a heredoc executed by the host's python3 — which the
+  # installer neither installed nor required — with its failure discarded. A
+  # host without python3 therefore finished with no keeper record at all, which
+  # reads as "no key set" and leaves every write open, while the installer
+  # printed success regardless.
+  if ! keeper_key="$(docker run --rm \
+      -v "$project_dir/data:/data" \
+      --entrypoint python "$bask_image" -m server.init_keeper /data/config.json)"; then
+    echo "Could not set up the Head Keeper key; Bask has NOT been left protected." >&2
+    echo "Fix the error above and re-run the installer before using Bask." >&2
+    exit 1
+  fi
+  chown "$run_user:$run_group" "$project_dir/data/config.json"
 fi
 if [[ ! -f "$project_dir/data/readings.db" && -f "$project_dir/readings.db" ]]; then
   sqlite3 "$project_dir/readings.db" ".backup '$project_dir/data/readings.db'"
