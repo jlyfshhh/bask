@@ -212,7 +212,7 @@ function buildMessages(data) {
   const hour = new Date().getHours();
 
   const attention = enclosures.filter((enc) => enc.status === "warning" || enc.status === "danger");
-  const waiting = enclosures.filter((enc) => enc.status === "stale" || enc.status === "no_data");
+  const waiting = enclosures.filter((enc) => enc.status === "stale" || enc.status === "no_data" || enc.status === "no_ranges");
   const okCount = counts.ok || 0;
 
   // ── How the room's feeling ──
@@ -284,7 +284,7 @@ function buildMessages(data) {
   // publishes configured/selected/stale/error plus the device state, where
   // reachability is `online`. This condition was therefore never true, and the
   // room-climate line never appeared.
-  if (climate?.configured && climate.online !== false && !climate.stale && climate.temperature != null) {
+  if (climate?.configured && climate.online !== false && !climate.stale && !climate.error && climate.temperature != null) {
     messages.push(`The room itself is a comfy ${Math.round(climate.temperature)}°${climate.humidity != null ? ` at ${Math.round(climate.humidity)}% humidity` : ""}.`);
   }
 

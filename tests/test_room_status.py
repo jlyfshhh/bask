@@ -84,6 +84,25 @@ def main():
     assert "cached care tasks are hidden" in joined
     assert "Example Animal" not in joined, "stale task details leaked into the live ticker"
 
+    setup_incomplete = fixture(counts={"ok": 1, "warning": 0, "danger": 0,
+                                               "stale": 0, "no_data": 0, "no_ranges": 1})
+    setup_incomplete["bask"]["enclosures"] = [
+        {"name": "Ready Habitat", "status": "ok"},
+        {"name": "Setup Habitat", "status": "no_ranges"},
+    ]
+    setup_messages = " ".join(node_eval(f"room.buildMessages({json.dumps(setup_incomplete)})"))
+    assert "Setup Habitat" in setup_messages
+    assert "all 1 enclosures" not in setup_messages
+    assert "every habitat" not in setup_messages.lower()
+
+    cielo_error = fixture()
+    cielo_error["bask"]["room_climate"] = {
+        "configured": True, "online": True, "stale": False,
+        "error": "cloud request failed", "temperature": 72, "humidity": 55,
+    }
+    climate_messages = " ".join(node_eval(f"room.buildMessages({json.dumps(cielo_error)})"))
+    assert "comfy 72" not in climate_messages, "errored cached Cielo data was described as live"
+
     recovered = state(fixture())
     assert recovered["shedStatus"] == "live" and recovered["connection"]["label"] == "Live"
     print("Room-dashboard source-state tests passed.")
