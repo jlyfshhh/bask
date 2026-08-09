@@ -31,12 +31,23 @@ def main():
 
     dockerfile = (ROOT / "Dockerfile").read_text()
     assert "USER bask:bask" in dockerfile
+    for label in (
+        "org.opencontainers.image.source",
+        "org.opencontainers.image.revision",
+        "org.opencontainers.image.version",
+        "org.opencontainers.image.licenses",
+    ):
+        assert label in dockerfile, label
     assert "BASK_ROLE: web" in (ROOT / "compose.yaml").read_text()
     assert "BASK_ROLE: scanner" in (ROOT / "compose.yaml").read_text()
 
     installer = (ROOT / "deploy" / "install.sh").read_text()
     for marker in ("BASK_UID", "BASK_GID", "BASK_BLUETOOTH_GID", "chmod 0700", "chmod 0600"):
         assert marker in installer, marker
+
+    publish = (ROOT / ".github" / "workflows" / "publish-image.yml").read_text()
+    assert "provenance: mode=max" in publish
+    assert "sbom: true" in publish
     print("Container boundary and private-file tests passed.")
 
 

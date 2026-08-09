@@ -2,6 +2,16 @@ FROM python:3.12-slim-bookworm
 
 ARG APP_UID=10001
 ARG APP_GID=10001
+ARG VCS_REF=unknown
+ARG VERSION=dev
+ARG SOURCE_URL=https://github.com/jlyfshhh/bask
+
+LABEL org.opencontainers.image.title="Bask" \
+      org.opencontainers.image.description="Local-first enclosure climate monitoring" \
+      org.opencontainers.image.source="$SOURCE_URL" \
+      org.opencontainers.image.revision="$VCS_REF" \
+      org.opencontainers.image.version="$VERSION" \
+      org.opencontainers.image.licenses="MIT"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
