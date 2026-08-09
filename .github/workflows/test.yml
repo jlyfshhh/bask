@@ -3,6 +3,8 @@ name: Test
 on:
   push:
   pull_request:
+  # Publication depends on this workflow, so a red build cannot ship an image.
+  workflow_call:
 
 jobs:
   test:

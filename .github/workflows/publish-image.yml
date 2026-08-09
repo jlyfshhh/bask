@@ -23,6 +23,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # An image must never be published from a build that did not pass. This
+  # repository shipped one on 2026-08-08 (bask c3d944d) while its tests were
+  # red, because publication and testing were separate workflows with no
+  # relationship. Calling the real suite keeps the two from drifting apart.
+  verify:
+    uses: ./.github/workflows/test.yml
+    # Without this the called workflow gets no secrets, and the privacy scan
+    # would quietly downgrade to "unconfigured" on the path that publishes.
+    secrets: inherit
+
   # One native runner per architecture. Building arm64 under QEMU works but
   # takes the better part of an hour for an npm install plus a bundler; native
   # arm64 runners are free for public repositories and finish in minutes.
@@ -35,6 +45,7 @@ jobs:
             runner: ubuntu-latest
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
+    needs: verify
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
