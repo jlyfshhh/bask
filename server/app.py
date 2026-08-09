@@ -19,13 +19,15 @@ import time
 import urllib.request
 from contextlib import asynccontextmanager
 from pathlib import Path
+import ipaddress
+import re
 from typing import Any, Literal
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scanner"))
 import db  # noqa: E402
@@ -847,8 +849,45 @@ def update_settings(payload: SettingsPayload, _: None = Keeper):
 # this list each cycle, so adds/edits take effect within one poll interval with
 # no restart. The dashboard strip stays hidden until at least one unit is added.
 
+def validated_lan_host(value: str) -> str:
+    """
+    Accept a plain LAN host or IP and nothing else.
+
+    Bask connects to whatever this names, so a length-capped free string is the
+    wrong shape: it admits credentials, ports, paths, and cloud metadata
+    addresses. Anything that is not a bare hostname or address is refused.
+    """
+    host = (value or "").strip()
+    if not host or len(host) > 64:
+        raise ValueError("Enter the device's address on your network.")
+    if any(character in host for character in "@/\\?#:[] \t"):
+        raise ValueError("Use just the address, with no scheme, port, path, or sign-in details.")
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        # A hostname: letters, digits, hyphens, and dots only.
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]{0,62}", host):
+            raise ValueError("That does not look like a device address.")
+        return host
+    if address.is_loopback or address.is_multicast or address.is_reserved or address.is_unspecified:
+        raise ValueError("That address cannot be a device on your network.")
+    # 169.254.169.254 and friends are how a compromised import would reach a
+    # cloud metadata service. Bask talks to home networks only.
+    if address.is_link_local:
+        raise ValueError("Link-local addresses are not accepted.")
+    if not address.is_private:
+        raise ValueError("Bask only connects to devices on your own network.")
+    return host
+
+
 class ThermostatPayload(BaseModel):
     ip: str = Field(min_length=1, max_length=64)
+
+    @field_validator("ip")
+    @classmethod
+    def _check_ip(cls, value: str) -> str:
+        return validated_lan_host(value)
+
     name: str | None = Field(None, max_length=64)
     enabled: bool = True
 
@@ -1153,6 +1192,14 @@ def _clean_str(v, fallback="", limit=64) -> str:
     return str(v)[:limit] if isinstance(v, (str, int, float)) else fallback
 
 
+_SPECIES_NUMERIC_FIELDS = frozenset({
+    "warm_min", "warm_max", "cool_min", "cool_max",
+    "humidity_min", "humidity_max",
+    "night_warm_min", "night_warm_max", "night_cool_min", "night_cool_max",
+    "night_humidity_min", "night_humidity_max",
+})
+
+
 def _validate_import(data: dict) -> dict:
     """Reduce an uploaded settings file to a structurally safe config.
 
@@ -1177,18 +1224,70 @@ def _validate_import(data: dict) -> dict:
                                   "species_id": _clean_str(e.get("species_id"), None)
                                   if e.get("species_id") is not None else None,
                                   "sensors": slots})
-    out["species"] = [
-        {**{k: v for k, v in sp.items() if isinstance(k, str)},
-         "id": _clean_str(sp["id"]), "name": _clean_str(sp["name"])}
-        for sp in data.get("species", [])
-        if isinstance(sp, dict) and sp.get("id") and sp.get("name")]
-    for key in ("settings", "ntfy"):
-        if isinstance(data.get(key), dict):
-            out[key] = data[key]
-    out["thermostats"] = [
-        {"ip": _clean_str(t.get("ip")), "name": _clean_str(t.get("name"), None)
-         if t.get("name") is not None else None, "enabled": bool(t.get("enabled", True))}
-        for t in data.get("thermostats", []) if isinstance(t, dict) and t.get("ip")]
+    # Species carried every field the file happened to contain. The range
+    # evaluator reads these as numbers, so a string like "warm" survived import
+    # and raised a TypeError when the dashboard next evaluated that enclosure.
+    out["species"] = []
+    for sp in data.get("species", []):
+        if not (isinstance(sp, dict) and sp.get("id") and sp.get("name")):
+            continue
+        cleaned: dict[str, Any] = {"id": _clean_str(sp["id"]), "name": _clean_str(sp["name"])}
+        for key, value in sp.items():
+            if not isinstance(key, str) or key in ("id", "name"):
+                continue
+            if key not in _SPECIES_NUMERIC_FIELDS:
+                continue  # unknown fields are dropped rather than carried
+            if value is None:
+                cleaned[key] = None
+            elif isinstance(value, bool):
+                raise ValueError(f"species '{cleaned['name']}' field {key} must be a number")
+            elif isinstance(value, (int, float)):
+                number = float(value)
+                if number != number or number in (float("inf"), float("-inf")):
+                    raise ValueError(f"species '{cleaned['name']}' field {key} is not a finite number")
+                if not (-100 <= number <= 250):
+                    raise ValueError(f"species '{cleaned['name']}' field {key} is out of range")
+                cleaned[key] = value
+            else:
+                raise ValueError(f"species '{cleaned['name']}' field {key} must be a number, not {type(value).__name__}")
+        out["species"].append(cleaned)
+
+    # Settings and ntfy were copied straight through, bypassing the bounds the
+    # live endpoints enforce. Run them through the same models.
+    if isinstance(data.get("settings"), dict):
+        try:
+            known = {k: v for k, v in data["settings"].items() if k in SettingsPayload.model_fields}
+            out["settings"] = SettingsPayload(**known).model_dump(exclude_none=True)
+        except Exception as exc:
+            raise ValueError(f"settings: {exc}") from exc
+    if isinstance(data.get("ntfy"), dict):
+        # The topic is machine-local and never imported; the server must be a
+        # real https endpoint rather than any string.
+        server = data["ntfy"].get("server")
+        clean_ntfy: dict[str, Any] = {"enabled": bool(data["ntfy"].get("enabled", False))}
+        if server is not None:
+            server_text = _clean_str(server, "", 200)
+            if server_text:
+                if not server_text.startswith("https://"):
+                    raise ValueError("the notification server must be an https:// address")
+                if any(character in server_text for character in " \t@"):
+                    raise ValueError("that notification server address is not valid")
+                clean_ntfy["server"] = server_text
+        out["ntfy"] = clean_ntfy
+
+    out["thermostats"] = []
+    for t in data.get("thermostats", []):
+        if not (isinstance(t, dict) and t.get("ip")):
+            continue
+        try:
+            host = validated_lan_host(_clean_str(t.get("ip")))
+        except ValueError as exc:
+            raise ValueError(f"thermostat address: {exc}") from exc
+        out["thermostats"].append({
+            "ip": host,
+            "name": _clean_str(t.get("name"), None) if t.get("name") is not None else None,
+            "enabled": bool(t.get("enabled", True)),
+        })
     if not (out["sensors"] or out["enclosures"] or out["species"]):
         raise ValueError("no recognizable Bask settings in this file")
     return out

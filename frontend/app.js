@@ -49,6 +49,22 @@ function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, c =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
+// Values that are supposed to be numbers. Integrations are third-party services
+// and a firmware quirk or a hostile response can put a string where a reading
+// belongs — and readings are interpolated into markup without esc(), on the
+// grounds that "it is a number". This makes that true instead of assumed.
+function num(value, fallback = "—") {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? String(parsed) : fallback;
+}
+// An identifier going into an inline handler sits inside a JavaScript string
+// inside an HTML attribute. esc() is not enough there: the browser decodes
+// entities before the handler runs, so &#39; becomes a quote again and closes
+// the string early. Identifiers are machine-generated, so anything outside a
+// safe alphabet means something is wrong and is dropped rather than encoded.
+function idAttr(value) {
+  return String(value ?? "").replace(/[^A-Za-z0-9:._-]/g, "");
+}
 function fmtAge(sec) {
   if (sec == null) return "never";
   if (sec < 60) return `${sec}s ago`;
@@ -231,8 +247,8 @@ function renderThermostats(data) {
     for (const o of unit.outputs) {
       chips.push(`<div class="tchip ${o.alarm ? "alarm" : "ok"}">
         <span class="tc-name">${esc(o.name)}</span>
-        <span class="tc-temp">${o.temp ?? "—"}${u}</span>
-        <span class="tc-sub">→ ${o.setpoint ?? "—"}${u} · ${o.output_pct ?? 0}%${o.heating ? " 🔥" : ""}${o.error ? " · " + esc(o.error) : ""}</span>
+        <span class="tc-temp">${num(o.temp)}${u}</span>
+        <span class="tc-sub">→ ${num(o.setpoint)}${u} · ${num(o.output_pct, "0")}%${o.heating ? " 🔥" : ""}${o.error ? " · " + esc(o.error) : ""}</span>
       </div>`);
     }
   }
@@ -279,7 +295,7 @@ function encCardHTML(e) {
     flags.push(`<span class="flag stale-flag">no signal</span>`);
 
   return `
-    <div class="enc-card ${e.status}" onclick="openDetail('${e.id}')">
+    <div class="enc-card ${e.status}" onclick="openDetail('${idAttr(e.id)}')">
       <div class="enc-head">
         <div class="enc-title">
           <div class="enc-name">${esc(e.name)}</div>
@@ -299,7 +315,7 @@ function soloCardHTML(s) {
   const status = s.temp == null ? "no_data" : s.stale ? "stale" : "ok";
   const u = "°" + _tempUnit;
   return `
-    <div class="enc-card solo ${status}" onclick="openDetailSolo('${s.mac}')">
+    <div class="enc-card solo ${status}" onclick="openDetailSolo('${idAttr(s.mac)}')">
       <div class="enc-head">
         <div class="enc-title">
           <div class="enc-name">${esc(s.name)}</div>
@@ -364,7 +380,7 @@ function openDetail(encId) {
     </div>
     <div class="detail-rows">${rows}</div>
     <div class="form-actions">
-      <button class="btn" onclick="closeDetail(); openManage('enclosures'); setTimeout(()=>editEnclosure('${e.id}'),60)">Edit enclosure</button>
+      <button class="btn" onclick="closeDetail(); openManage('enclosures'); setTimeout(()=>editEnclosure('${idAttr(e.id)}'),60)">Edit enclosure</button>
     </div>`;
   document.getElementById("detail").classList.add("open");
 }
@@ -508,14 +524,14 @@ function renderEnclosuresPane() {
     <div class="row">
       <div class="row-top">
         <div class="row-reorder">
-          <button class="btn icon" ${i === 0 ? "disabled" : ""} onclick="moveEnclosure('${e.id}',-1)">▲</button>
-          <button class="btn icon" ${i === _enclosures.length - 1 ? "disabled" : ""} onclick="moveEnclosure('${e.id}',1)">▼</button>
+          <button class="btn icon" ${i === 0 ? "disabled" : ""} onclick="moveEnclosure('${idAttr(e.id)}',-1)">▲</button>
+          <button class="btn icon" ${i === _enclosures.length - 1 ? "disabled" : ""} onclick="moveEnclosure('${idAttr(e.id)}',1)">▼</button>
         </div>
         <div class="row-info">
           <div class="row-name">${esc(e.name)}</div>
           <div class="row-sub">${esc(spName[e.species_id] || "No species")}</div>
         </div>
-        <button class="btn sm" onclick="editEnclosure('${e.id}')">Edit</button>
+        <button class="btn sm" onclick="editEnclosure('${idAttr(e.id)}')">Edit</button>
       </div>
       ${e.sensors.length ? `<div class="row-tags">${e.sensors.map(s =>
         `<span class="tag"><b>${esc(s.position)}</b> · ${esc(sName[s.mac.toUpperCase()] || s.mac)}</span>`).join("")}</div>` : ""}
@@ -553,8 +569,8 @@ function editEnclosure(id) {
       <div id="ef-slots">${slots.map(slotHTML).join("")}</div>
       <button class="btn ghost sm" onclick="addSlot()">+ Add sensor slot</button></div>
     <div class="form-actions">
-      ${enc ? `<button class="btn danger" onclick="deleteEnclosure('${enc.id}')">Delete</button>` : ""}
-      <button class="btn primary" onclick="saveEnclosure(${enc ? `'${enc.id}'` : "null"})">Save</button>
+      ${enc ? `<button class="btn danger" onclick="deleteEnclosure('${idAttr(enc.id)}')">Delete</button>` : ""}
+      <button class="btn primary" onclick="saveEnclosure(${enc ? `'${idAttr(enc.id)}'` : "null"})">Save</button>
     </div>`);
 }
 function slotHTML(slot) {
@@ -595,7 +611,7 @@ function renderSensorsPane() {
       <div class="row-info"><div class="row-name">${esc(s.name)}</div>
         ${s.species ? `<div class="row-sub">${esc(s.species)}</div>` : ""}
         <div class="row-mac">${esc(s.mac)}</div></div>
-      <button class="btn sm" onclick="editSensor('${s.mac}')">Edit</button>
+      <button class="btn sm" onclick="editSensor('${idAttr(s.mac)}')">Edit</button>
     </div></div>`).join("");
   document.getElementById("pane-sensors").innerHTML = `
     <div class="pane-toolbar"><h2>Sensors</h2>
@@ -649,8 +665,8 @@ function editSensor(mac) {
     <div class="field"><label>Species (optional label)</label><input type="text" id="sf-species" value="${esc(s.species || "")}"></div>
     <div class="row-mac" style="margin-bottom:14px">${esc(s.mac)}</div>
     <div class="form-actions">
-      <button class="btn danger" onclick="deleteSensor('${s.mac}')">Delete</button>
-      <button class="btn primary" onclick="saveSensor('${s.mac}')">Save</button></div>`);
+      <button class="btn danger" onclick="deleteSensor('${idAttr(s.mac)}')">Delete</button>
+      <button class="btn primary" onclick="saveSensor('${idAttr(s.mac)}')">Save</button></div>`);
 }
 async function saveSensor(mac) {
   const name = document.getElementById("sf-name").value.trim();
@@ -757,11 +773,11 @@ function sideBtn(encId, side, slot, sName) {
   const who = filled ? esc(sName[slot.mac.toUpperCase()] || slot.mac) : "";
   return `
     <button class="pt-side ${side} ${filled ? "filled" : "empty"}"
-            onclick="pairAssign('${encId}','${side}')">
+            onclick="pairAssign('${idAttr(encId)}','${idAttr(side)}')">
       <span class="pts-label">${side === "warm" ? "🔥 Warm" : "❄ Cool"}</span>
       <span class="pts-who">${filled ? "✓ " + who : "tap to set"}</span>
     </button>
-    ${filled ? `<button class="pt-undo" onclick="event.stopPropagation();pairUndo('${encId}','${slot.mac}')" title="Clear">✕</button>` : ""}`;
+    ${filled ? `<button class="pt-undo" onclick="event.stopPropagation();pairUndo('${idAttr(encId)}','${idAttr(slot.mac)}')" title="Clear">✕</button>` : ""}`;
 }
 
 async function pairAssign(encId, side) {
@@ -826,7 +842,7 @@ function renderSpeciesPane() {
         <div class="row-sub">Warm ${s.warm_temp_min ?? "–"}–${s.warm_temp_max ?? "–"}${u} ·
           Cool ${s.cool_temp_min ?? "–"}–${s.cool_temp_max ?? "–"}${u} ·
           Hum ${s.humidity_min ?? "–"}–${s.humidity_max ?? "–"}%</div></div>
-      <button class="btn sm" onclick="editSpecies('${s.id}')">Edit</button>
+      <button class="btn sm" onclick="editSpecies('${idAttr(s.id)}')">Edit</button>
     </div></div>`).join("");
   document.getElementById("pane-species").innerHTML = `
     <div class="pane-toolbar"><h2>Species &amp; ranges</h2>
@@ -879,17 +895,17 @@ function editSpecies(id) {
     </div>
 
     <div class="form-actions">
-      ${sp ? `<button class="btn danger" onclick="deleteSpecies('${sp.id}')">Delete</button>` : ""}
-      <button class="btn primary" onclick="saveSpecies(${sp ? `'${sp.id}'` : "null"})">Save</button></div>`);
+      ${sp ? `<button class="btn danger" onclick="deleteSpecies('${idAttr(sp.id)}')">Delete</button>` : ""}
+      <button class="btn primary" onclick="saveSpecies(${sp ? `'${idAttr(sp.id)}'` : "null"})">Save</button></div>`);
 }
 function stepper(key, val, label, step, dflt) {
   const has = val != null;
   return `<div class="field">
     <label>${label}</label>
     <div class="stepper" id="st-${key}" data-val="${has ? val : ""}" data-step="${step}" data-default="${dflt}">
-      <button class="step-btn" onclick="stepVal('${key}',-1)">−</button>
+      <button class="step-btn" onclick="stepVal('${idAttr(key)}',-1)">−</button>
       <div class="sval ${has ? "" : "unset"}">${has ? val : "off"}</div>
-      <button class="step-btn" onclick="stepVal('${key}',1)">+</button>
+      <button class="step-btn" onclick="stepVal('${idAttr(key)}',1)">+</button>
     </div></div>`;
 }
 function stepVal(key, dir) {
@@ -944,7 +960,7 @@ function renderThermostatsPane() {
     let sub;
     if (t.enabled === false) sub = "Disabled";
     else if (reach) sub = (st.outputs || []).map(o =>
-      `${esc(o.name)} ${o.temp ?? "—"}${u}→${o.setpoint ?? "—"}${u}`).join(" · ") || "No outputs";
+      `${esc(o.name)} ${num(o.temp)}${u}→${num(o.setpoint)}${u}`).join(" · ") || "No outputs";
     else if (reach === false) sub = "Offline — check the IP and that the status page is on";
     else sub = "Connecting…";
     return `
@@ -954,7 +970,7 @@ function renderThermostatsPane() {
           <div class="row-sub">${sub}</div>
           <div class="row-mac">${esc(t.ip)}</div>
         </div>
-        <button class="btn sm" onclick="editThermostat('${esc(t.ip)}')">Edit</button>
+        <button class="btn sm" onclick="editThermostat('${idAttr(t.ip)}')">Edit</button>
       </div></div>`;
   }).join("");
   document.getElementById("pane-thermostats").innerHTML = `
@@ -1165,8 +1181,8 @@ function editThermostat(ip) {
     <div class="field"><button class="btn ghost sm" onclick="testThermostat()">⚡ Test connection</button>
       <div id="tf-test" class="test-result"></div></div>
     <div class="form-actions">
-      ${t ? `<button class="btn danger" onclick="deleteThermostat('${esc(t.ip)}')">Delete</button>` : ""}
-      <button class="btn primary" onclick="saveThermostat(${t ? `'${esc(t.ip)}'` : "null"})">Save</button>
+      ${t ? `<button class="btn danger" onclick="deleteThermostat('${idAttr(t.ip)}')">Delete</button>` : ""}
+      <button class="btn primary" onclick="saveThermostat(${t ? `'${idAttr(t.ip)}'` : "null"})">Save</button>
     </div>`);
 }
 
@@ -1431,9 +1447,9 @@ function copyTopic() {
 }
 function stepperPlain(key, val, step, unit) {
   return `<div class="stepper" id="set-${key}" data-val="${val}" data-step="${step}" data-unit="${unit}">
-    <button class="step-btn" onclick="stepSetting('${key}',-1)">−</button>
+    <button class="step-btn" onclick="stepSetting('${idAttr(key)}',-1)">−</button>
     <div class="sval">${val} ${unit}</div>
-    <button class="step-btn" onclick="stepSetting('${key}',1)">+</button></div>`;
+    <button class="step-btn" onclick="stepSetting('${idAttr(key)}',1)">+</button></div>`;
 }
 async function stepSetting(key, dir) {
   const el = document.getElementById("set-" + key);
@@ -1451,9 +1467,9 @@ function fmtHourLong(h) {
 }
 function hourStepper(key, val) {
   return `<div class="stepper" id="set-${key}" data-val="${val}">
-    <button class="step-btn" onclick="stepHour('${key}',-1)">−</button>
+    <button class="step-btn" onclick="stepHour('${idAttr(key)}',-1)">−</button>
     <div class="sval">${fmtHourLong(val)}</div>
-    <button class="step-btn" onclick="stepHour('${key}',1)">+</button></div>`;
+    <button class="step-btn" onclick="stepHour('${idAttr(key)}',1)">+</button></div>`;
 }
 async function stepHour(key, dir) {
   const el = document.getElementById("set-" + key);
