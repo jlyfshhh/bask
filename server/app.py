@@ -298,8 +298,13 @@ async def no_store_api_responses(request: Request, call_next):
 
 def require_keeper(request: Request) -> None:
     record = load_config().get("keeper")
-    if not keeper.is_configured(record):
+    state = keeper.keeper_state(record)
+    if state == "unconfigured":
         return  # No key set: unchanged, open behaviour.
+    if state == "corrupt":
+        # Protection was configured and is now unusable. Treating that as "open"
+        # would silently drop it; refuse writes and say how to recover.
+        raise HTTPException(503, keeper.RECOVERY)
     if keeper.session_is_valid(request.cookies.get(keeper.COOKIE_NAME), record):
         return
     raise HTTPException(401, "Head Keeper key required")
@@ -321,11 +326,15 @@ class KeeperSetKey(BaseModel):
 def keeper_status(request: Request):
     """Open on purpose: the UI needs to know whether to show manage controls."""
     record = load_config().get("keeper")
-    configured = keeper.is_configured(record)
+    state = keeper.keeper_state(record)
+    if state == "corrupt":
+        # Must match require_keeper, or the UI offers controls every write then
+        # refuses.
+        return {"configured": True, "unlocked": False, "problem": keeper.RECOVERY}
     return {
-        "configured": configured,
+        "configured": state == "configured",
         # With no key set everyone is effectively the Head Keeper.
-        "unlocked": (not configured)
+        "unlocked": state == "unconfigured"
         or keeper.session_is_valid(request.cookies.get(keeper.COOKIE_NAME), record),
     }
 
@@ -337,7 +346,12 @@ def keeper_unlock(payload: KeeperUnlock, response: Response):
         return {"ok": True, "configured": False, "unlocked": True}
     if not keeper.verify_key(payload.key, record):
         raise HTTPException(401, "That key does not match.")
-    response.set_cookie(keeper.COOKIE_NAME, keeper.session_token(record), **keeper.cookie_kwargs())
+    # Older installs have no signing secret yet; mint one on first unlock.
+    cfg = load_config()
+    keeper.ensure_session_secret(cfg["keeper"])
+    save_config(cfg)
+    response.set_cookie(
+        keeper.COOKIE_NAME, keeper.issue_session(cfg["keeper"]), **keeper.cookie_kwargs())
     return {"ok": True, "configured": True, "unlocked": True}
 
 
@@ -367,11 +381,12 @@ def keeper_set_key(payload: KeeperSetKey, request: Request, response: Response):
         new_key = keeper.validate_new_key(payload.key)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
-    cfg["keeper"] = keeper.hash_key(new_key)
+    # A fresh record gets a fresh signing secret, so rotating the key ends every
+    # existing session on top of the salt and hash changing under the signature.
+    cfg["keeper"] = keeper.ensure_session_secret(keeper.hash_key(new_key))
     save_config(cfg)
-    # Re-issue: the token is derived from the hash, so the old cookie is dead.
     response.set_cookie(
-        keeper.COOKIE_NAME, keeper.session_token(cfg["keeper"]), **keeper.cookie_kwargs())
+        keeper.COOKIE_NAME, keeper.issue_session(cfg["keeper"]), **keeper.cookie_kwargs())
     return {"ok": True, "configured": True, "unlocked": True}
 
 
@@ -1179,10 +1194,60 @@ def _validate_import(data: dict) -> dict:
     return out
 
 
+# Keys that must never appear in a portable export, checked recursively before
+# the file is handed over. The allowlist below already excludes them; this is
+# the assertion that a future field cannot quietly reintroduce one.
+_EXPORT_FORBIDDEN = {
+    "keeper", "session_secret", "salt", "hash", "topic", "password", "passwd",
+    "token", "secret", "api_key", "apikey", "access_code", "authorization",
+}
+
+
+def _assert_no_secrets(value: Any, path: str = "") -> None:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if isinstance(key, str) and key.lower() in _EXPORT_FORBIDDEN:
+                raise RuntimeError(f"export would leak {path}{key}")
+            _assert_no_secrets(item, f"{path}{key}.")
+    elif isinstance(value, list):
+        for item in value:
+            _assert_no_secrets(item, path)
+
+
+def _portable_export(cfg: dict) -> dict:
+    """
+    The settings worth carrying to another machine, and nothing else.
+
+    Serializing the live config wholesale made the export a credential: it
+    carried the Head Keeper salt and hash, from which the session cookie was
+    directly derived, plus the private ntfy topic — anyone holding that topic
+    can push notifications to the household's phones.
+    """
+    out: dict[str, Any] = {
+        "sensors": [
+            {"mac": s.get("mac"), "name": s.get("name"), "species": s.get("species")}
+            for s in cfg.get("sensors", []) if isinstance(s, dict)
+        ],
+        "enclosures": cfg.get("enclosures", []),
+        "species": cfg.get("species", []),
+        "thermostats": [
+            {"ip": t.get("ip"), "name": t.get("name"), "enabled": t.get("enabled", True)}
+            for t in cfg.get("thermostats", []) if isinstance(t, dict)
+        ],
+        "settings": cfg.get("settings", {}),
+    }
+    # The ntfy server address is portable; the topic is the credential.
+    ntfy = cfg.get("ntfy")
+    if isinstance(ntfy, dict):
+        out["ntfy"] = {"server": ntfy.get("server"), "enabled": bool(ntfy.get("enabled", False))}
+    _assert_no_secrets(out)
+    return out
+
+
 @app.get("/api/config/export")
 def export_config(_: None = Keeper):
-    cfg = load_config()
-    return Response(content=json.dumps(cfg, indent=2), media_type="application/json",
+    payload = _portable_export(load_config())
+    return Response(content=json.dumps(payload, indent=2), media_type="application/json",
                     headers={"Content-Disposition": 'attachment; filename="bask-settings.json"'})
 
 
@@ -1197,6 +1262,19 @@ def import_config(payload: dict = Body(), _: None = Keeper):
     if CONFIG_PATH.exists():
         ts = time.strftime("%Y%m%d-%H%M%S")
         shutil.copy2(CONFIG_PATH, CONFIG_PATH.with_name(f"config.json.bak-{ts}-preimport"))
+    # Authentication is machine-local state, not portable husbandry data.
+    # Replacing the whole config used to drop the keeper block, and a missing
+    # block read as "no key set" — so restoring a backup silently unlocked the
+    # install. The private ntfy topic is preserved for the same reason: it is a
+    # local credential, and an imported file must not be able to set it.
+    current = load_config()
+    if isinstance(current.get("keeper"), dict):
+        clean["keeper"] = current["keeper"]
+    current_ntfy = current.get("ntfy")
+    if isinstance(current_ntfy, dict) and current_ntfy.get("topic"):
+        imported_ntfy = clean.get("ntfy") if isinstance(clean.get("ntfy"), dict) else {}
+        imported_ntfy["topic"] = current_ntfy["topic"]
+        clean["ntfy"] = imported_ntfy
     save_config(clean)
     return {"ok": True, "enclosures": len(clean["enclosures"]),
             "sensors": len(clean["sensors"]), "species": len(clean["species"])}

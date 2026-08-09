@@ -136,9 +136,15 @@ container while leaving `~/bask/data` untouched:
 curl -fsSL https://animalroom.app/bask/install.sh | bash
 ```
 
-Settings has a **💾 Download backup** button for portable, secret-free
-configuration. `scripts/backup.sh` creates a private filesystem backup of
-configuration, SQLite history, and configured Cielo credentials.
+Settings has a **💾 Download backup** button. It writes an explicit list of
+portable settings — sensors, enclosures, species, thermostats, and preferences —
+and by construction contains no Head Keeper record, session secret, ntfy topic,
+or integration credential. Restoring one never changes authentication: the key
+and the private topic on the machine you restore onto are kept as they are.
+
+`scripts/backup.sh` is the different thing: a private, machine-local filesystem
+backup that *does* include configuration, SQLite history, and Cielo credentials.
+Keep that one to yourself.
 
 ## Configuration
 

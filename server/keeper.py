@@ -19,12 +19,16 @@ import hashlib
 import hmac
 import os
 import secrets
+import time
 from typing import Any
 
 COOKIE_NAME = "bask_keeper"
-COOKIE_MAX_AGE = 60 * 60 * 24 * 365
+COOKIE_MAX_AGE = 60 * 60 * 24 * 30
 _ITERATIONS = 200_000
 _MIN_KEY_LENGTH = 8
+_TOKEN_VERSION = "v2"
+# A cookie minted far in the future would otherwise outlive its expiry.
+_CLOCK_SKEW = 300
 
 
 def generate_key() -> str:
@@ -53,20 +57,69 @@ def verify_key(key: str, record: dict[str, Any] | None) -> bool:
     return hmac.compare_digest(candidate.hex(), expected)
 
 
-def is_configured(record: dict[str, Any] | None) -> bool:
+def keeper_state(record: dict[str, Any] | None) -> str:
     """
-    True only for a record this module can actually verify against.
+    One of "unconfigured", "configured", or "corrupt".
 
-    The type check matters: a hand-edited or corrupted `keeper` block that
-    looked configured but could never match would lock the Head Keeper out of
-    their own dashboard with no way back in. Treating an unusable record as
-    "no key set" falls back to the open behaviour instead, which is the same
-    state every pre-existing install is already in.
+    These are three states, not two. An install with no key is open on purpose:
+    that is how Bask behaved before keys existed and how a wall display upgrades
+    without locking anyone out. But a `keeper` block that is present and
+    unusable is a different thing entirely — it means protection was configured
+    and is now broken, and treating that as "open" silently removes the
+    protection. It fails closed instead, and RECOVERY below says how to get back
+    in without a working key.
     """
+    if record is None:
+        return "unconfigured"
     if not isinstance(record, dict):
-        return False
-    return isinstance(record.get("salt"), str) and isinstance(record.get("hash"), str) \
-        and bool(record["salt"]) and bool(record["hash"])
+        return "corrupt"
+    if not record:
+        return "unconfigured"
+    salt, digest = record.get("salt"), record.get("hash")
+    if isinstance(salt, str) and isinstance(digest, str) and salt and digest:
+        return "configured"
+    return "corrupt"
+
+
+RECOVERY = (
+    "Bask's Head Keeper record is unreadable, so changes are refused. "
+    "Remove the \"keeper\" block from data/config.json on the machine running "
+    "Bask and restart it; the dashboard stays readable throughout."
+)
+
+
+def is_configured(record: dict[str, Any] | None) -> bool:
+    """True only for a record this module can actually verify against."""
+    return keeper_state(record) == "configured"
+
+
+def ensure_session_secret(record: dict[str, Any]) -> dict[str, Any]:
+    """
+    Give the record a random signing secret if it has none.
+
+    This is what stops a settings export from being a credential. Cookies used
+    to be sha256(salt:hash) — both of which the export contained — so anyone
+    holding a backup file could compute a valid session without knowing the key.
+    The secret is machine-local and never leaves in an export.
+    """
+    existing = record.get("session_secret")
+    if not isinstance(existing, str) or len(existing) < 32:
+        record["session_secret"] = secrets.token_hex(32)
+    return record
+
+
+def _sign(record: dict[str, Any], issued: int) -> str:
+    secret = record.get("session_secret")
+    if not isinstance(secret, str) or not secret:
+        raise ValueError("no session secret on this keeper record")
+    message = f"{issued}:{record.get('salt', '')}:{record.get('hash', '')}".encode()
+    return hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()
+
+
+def issue_session(record: dict[str, Any], now: float | None = None) -> str:
+    """Mint a cookie value. Requires a record that already has a secret."""
+    issued = int(now if now is not None else time.time())
+    return f"{_TOKEN_VERSION}.{issued}.{_sign(record, issued)}"
 
 
 def validate_new_key(key: str) -> str:
@@ -79,20 +132,40 @@ def validate_new_key(key: str) -> str:
     return key
 
 
-def session_token(record: dict[str, Any]) -> str:
+def session_is_valid(token: str | None, record: dict[str, Any] | None,
+                     now: float | None = None) -> bool:
     """
-    The cookie value for an unlocked session.
+    Check a cookie: right version, unexpired, and signed by this machine.
 
-    It is derived from the stored hash, so changing or clearing the key
-    invalidates every existing cookie without needing to track sessions.
+    The signature covers the stored salt and hash as well as the issue time, so
+    changing or clearing the key still invalidates every existing cookie —
+    the property the old derived token had — without the token being derivable
+    from anything that appears in an export.
     """
-    return hashlib.sha256(f"{record.get('salt','')}:{record.get('hash','')}".encode()).hexdigest()
-
-
-def session_is_valid(token: str | None, record: dict[str, Any] | None) -> bool:
-    if not token or not is_configured(record):
+    if not token or keeper_state(record) != "configured":
         return False
-    return hmac.compare_digest(token, session_token(record))
+    assert record is not None
+    if not isinstance(record.get("session_secret"), str):
+        # Pre-v2 install that has not minted a secret yet. Old cookies are not
+        # accepted; unlocking once issues a new one.
+        return False
+    parts = token.split(".")
+    if len(parts) != 3 or parts[0] != _TOKEN_VERSION:
+        return False
+    try:
+        issued = int(parts[1])
+    except (TypeError, ValueError):
+        return False
+    current = int(now if now is not None else time.time())
+    if issued > current + _CLOCK_SKEW:
+        return False
+    if current - issued > COOKIE_MAX_AGE:
+        return False
+    try:
+        expected = _sign(record, issued)
+    except ValueError:
+        return False
+    return hmac.compare_digest(parts[2], expected)
 
 
 def cookie_kwargs(secure: bool = False) -> dict[str, Any]:

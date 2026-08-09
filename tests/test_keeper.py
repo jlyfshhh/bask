@@ -1,5 +1,7 @@
 """Head Keeper key: hashing, sessions, and the lockout cases that would hurt."""
+import hmac
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -55,16 +57,70 @@ def test_absurdly_low_iterations_are_ignored():
 
 
 def test_session_token_dies_when_the_key_changes():
-    first = keeper.hash_key("first-key-value")
-    token = keeper.session_token(first)
+    first = keeper.ensure_session_secret(keeper.hash_key("first-key-value"))
+    token = keeper.issue_session(first)
     assert keeper.session_is_valid(token, first)
 
-    second = keeper.hash_key("second-key-value")
+    second = keeper.ensure_session_secret(keeper.hash_key("second-key-value"))
     # Changing or clearing the key must invalidate every cookie already issued.
     assert not keeper.session_is_valid(token, second)
     assert not keeper.session_is_valid(token, None)
     assert not keeper.session_is_valid(None, first)
     assert not keeper.session_is_valid("", first)
+
+
+def test_a_settings_export_cannot_be_turned_into_a_session():
+    """QC-01. The cookie used to be sha256(salt:hash), and both were exported."""
+    import hashlib
+
+    record = keeper.ensure_session_secret(keeper.hash_key("a-real-keeper-key"))
+    # Everything a portable export is allowed to contain about the keeper: nothing.
+    exported = {k: v for k, v in record.items() if k not in ("session_secret",)}
+
+    old_style = hashlib.sha256(
+        f"{exported.get('salt', '')}:{exported.get('hash', '')}".encode()
+    ).hexdigest()
+    assert not keeper.session_is_valid(old_style, record)
+
+    # Nor any token derivable from the exported values by the current scheme.
+    for issued in (0, 1, int(time.time())):
+        for secret_guess in (exported.get("salt", ""), exported.get("hash", ""), ""):
+            forged = hmac.new(
+                secret_guess.encode(),
+                f"{issued}:{exported.get('salt','')}:{exported.get('hash','')}".encode(),
+                hashlib.sha256,
+            ).hexdigest()
+            assert not keeper.session_is_valid(f"v2.{issued}.{forged}", record)
+
+
+def test_sessions_expire():
+    record = keeper.ensure_session_secret(keeper.hash_key("a-real-keeper-key"))
+    now = time.time()
+    fresh = keeper.issue_session(record, now=now)
+    assert keeper.session_is_valid(fresh, record, now=now)
+    assert keeper.session_is_valid(fresh, record, now=now + keeper.COOKIE_MAX_AGE - 10)
+    assert not keeper.session_is_valid(fresh, record, now=now + keeper.COOKIE_MAX_AGE + 10)
+    # A cookie stamped in the future must not outlive its window either.
+    assert not keeper.session_is_valid(keeper.issue_session(record, now=now + 86_400), record, now=now)
+
+
+def test_rotating_the_key_rejects_every_earlier_session():
+    record = keeper.ensure_session_secret(keeper.hash_key("first-key-value"))
+    token = keeper.issue_session(record)
+    rotated = keeper.ensure_session_secret(keeper.hash_key("second-key-value"))
+    assert record["session_secret"] != rotated["session_secret"]
+    assert not keeper.session_is_valid(token, rotated)
+
+
+def test_a_corrupt_record_is_not_treated_as_open():
+    """QC-02. Three states, not two: absent means open, broken means closed."""
+    assert keeper.keeper_state(None) == "unconfigured"
+    assert keeper.keeper_state({}) == "unconfigured"
+    assert keeper.keeper_state(keeper.hash_key("a-real-keeper-key")) == "configured"
+    for broken in ({"salt": "abc"}, {"hash": "abc"}, {"salt": 1, "hash": 2},
+                   {"salt": "", "hash": ""}, "not-a-dict", []):
+        assert keeper.keeper_state(broken) == "corrupt", broken
+        assert not keeper.is_configured(broken)
 
 
 def test_new_keys_must_be_long_enough():

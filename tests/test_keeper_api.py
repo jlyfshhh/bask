@@ -114,6 +114,79 @@ def main() -> None:
         assert TestClient(app).put("/api/settings", json={"temp_unit": "F"}).status_code == 200
         print("  lock, unlock, and removing the key all behave")
 
+        # ── QC-01: a settings export must not be a credential ────────────────
+        stranger.post("/api/keeper/unlock", json={"key": "a-brand-new-key"})
+        # Put a key and a private ntfy topic back in place to export against.
+        stranger.post("/api/keeper/key", json={"key": "export-audit-key"})
+        keeper_client = TestClient(app)
+        assert keeper_client.post("/api/keeper/unlock", json={"key": "export-audit-key"}).status_code == 200
+        # Enabling ntfy is what mints the private topic; there is no endpoint
+        # that sets one, so read back what the app actually stored.
+        assert keeper_client.post("/api/ntfy", json={"enabled": True}).status_code == 200
+        stored = json.loads((data / "config.json").read_text(encoding="utf-8"))
+        private_topic = stored.get("ntfy", {}).get("topic")
+        assert private_topic, "the test needs a real topic to prove it is not exported"
+
+        export = keeper_client.get("/api/config/export")
+        assert export.status_code == 200, export.text
+        body = export.text
+        payload = export.json()
+
+        for secret in (stored["keeper"]["salt"], stored["keeper"]["hash"],
+                       stored["keeper"].get("session_secret", "\0"),
+                       private_topic):
+            assert secret not in body, "a portable export must contain no credential"
+        assert "keeper" not in payload
+        # And it must still be a useful backup.
+        assert "sensors" in payload and "enclosures" in payload and "species" in payload
+        print("  a settings export carries no keeper record, secret, or ntfy topic")
+
+        # The old deterministic cookie, computed from everything an export holds.
+        import hashlib
+        forged = hashlib.sha256(
+            f"{stored['keeper']['salt']}:{stored['keeper']['hash']}".encode()).hexdigest()
+        forger = TestClient(app)
+        forger.cookies.set("bask_keeper", forged)
+        assert forger.put("/api/settings", json={"temp_unit": "C"}).status_code == 401
+        forger.cookies.set("bask_keeper", f"v2.0.{forged}")
+        assert forger.put("/api/settings", json={"temp_unit": "C"}).status_code == 401
+        print("  a cookie derived from export contents is rejected")
+
+        # ── QC-02: restoring a backup must not disable authentication ────────
+        restored = keeper_client.post("/api/config/import", json=payload)
+        assert restored.status_code == 200, restored.text
+        after = json.loads((data / "config.json").read_text(encoding="utf-8"))
+        assert after.get("keeper", {}).get("hash") == stored["keeper"]["hash"], \
+            "restore must preserve the installed Head Keeper record"
+        assert after.get("ntfy", {}).get("topic") == private_topic, \
+            "restore must preserve the local ntfy topic"
+        assert TestClient(app).put("/api/settings", json={"temp_unit": "C"}).status_code == 401, \
+            "anonymous writes must still be refused after a restore"
+        assert keeper_client.put("/api/settings", json={"temp_unit": "C"}).status_code == 200, \
+            "the existing key must still work after a restore"
+        print("  restoring a backup leaves authentication exactly as it was")
+
+        # A legacy export that carries a keeper block must not install it.
+        hostile = dict(payload)
+        hostile["keeper"] = {"salt": "attacker", "hash": "attacker"}
+        assert keeper_client.post("/api/config/import", json=hostile).status_code == 200
+        after = json.loads((data / "config.json").read_text(encoding="utf-8"))
+        assert after["keeper"]["hash"] == stored["keeper"]["hash"], \
+            "an imported file must not be able to replace the Head Keeper record"
+        print("  an imported keeper block is ignored")
+
+        # ── QC-02: a corrupt record fails closed, not open ───────────────────
+        broken = json.loads((data / "config.json").read_text(encoding="utf-8"))
+        broken["keeper"] = {"salt": "only-half-a-record"}
+        (data / "config.json").write_text(json.dumps(broken), encoding="utf-8")
+        blocked = TestClient(app)
+        assert blocked.put("/api/settings", json={"temp_unit": "C"}).status_code == 503
+        status = blocked.get("/api/keeper").json()
+        assert status["configured"] is True and status["unlocked"] is False
+        assert "config.json" in status.get("problem", ""), "the error should say how to recover"
+        assert blocked.get("/api/dashboard").status_code == 200, "reads stay open"
+        print("  a corrupt keeper record refuses writes instead of opening them")
+
     print("Head Keeper API tests passed.")
 
 
