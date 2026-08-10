@@ -157,11 +157,11 @@ set_env_value() {
   fi
 }
 
-bluetooth_gid="$(getent group bluetooth 2>/dev/null | cut -d: -f3 || true)"
-[[ -n "$bluetooth_gid" ]] || bluetooth_gid="$run_gid"
+# No Bluetooth group is written here. Joining the bluetooth group does not
+# grant passive scanning: BlueZ reserves the AdvertisementMonitor1 interface
+# for root, so the scanner container runs as root and the group would be moot.
 set_env_value BASK_UID "$run_uid"
 set_env_value BASK_GID "$run_gid"
-set_env_value BASK_BLUETOOTH_GID "$bluetooth_gid"
 
 echo "==> Downloading and starting Bask"
 cd "$project_dir"
