@@ -45,12 +45,27 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    user: "${BASK_UID:-10001}:${BASK_GID:-10001}"
-    group_add:
-      - "${BASK_BLUETOOTH_GID:-113}"
-    read_only: true
+    # Root, and that is deliberate — do not "harden" this back to a normal user.
+    # Passive BLE scanning goes through BlueZ's AdvertisementMonitor1 D-Bus
+    # interface, and the policy BlueZ ships grants that interface to root only.
+    # A non-root client is refused during D-Bus authentication, which surfaces
+    # as "[Errno 104] Connection reset by peer" and no readings at all. Adding a
+    # local D-Bus policy for an unprivileged uid does not fix it.
+    #
+    # The isolation that matters is still intact: the web service above is
+    # non-root with a read-only root filesystem and no D-Bus socket, so nothing
+    # reachable from the network can talk to the host bus. This container has
+    # network_mode: none, mounts one socket read-only, and does nothing else.
+    user: "0:0"
+    # Dropping every capability also drops CAP_DAC_OVERRIDE, without which even
+    # root cannot write a /data directory owned by another uid.
     cap_drop:
       - ALL
+    cap_add:
+      - DAC_OVERRIDE
+    # The entrypoint writes its config into /data, so the root fs cannot be
+    # read-only here the way it is for the web service.
+    read_only: false
     security_opt:
       - no-new-privileges:true
     pids_limit: 128
