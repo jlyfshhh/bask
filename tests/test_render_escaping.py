@@ -13,6 +13,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
 APP_JS = ROOT / "frontend" / "app.js"
+INDEX_HTML = ROOT / "frontend" / "index.html"
+SERVER_APP = ROOT / "server" / "app.py"
+CONTAINER_ENTRYPOINT = ROOT / "docker-entrypoint.sh"
 
 HOSTILE = [
     "');alert(document.cookie);//",
@@ -102,6 +105,74 @@ def test_no_identifier_reaches_an_inline_handler_unescaped():
                 continue
             offenders.append(f"{fragment[:90]} -> ${{{expression}}}")
     assert not offenders, "unescaped identifiers in inline handlers:\n  " + "\n  ".join(offenders)
+
+
+def test_enclosure_cards_are_native_keyboard_controls():
+    text = APP_JS.read_text(encoding="utf-8")
+    assert text.count('<button type="button" class="enc-card') == 2
+    assert '<div class="enc-card' not in text
+    assert "aria-label=\"Open ${esc(" in text
+
+
+def test_dialog_keyboard_decisions_wrap_and_close():
+    script = f"""
+    {extract('dialogKeyAction')}
+    const cases = [
+      ["Escape", false, 1, 3],
+      ["Tab", false, 2, 3],
+      ["Tab", true, 0, 3],
+      ["Tab", false, -1, 0],
+      ["ArrowDown", false, 1, 3]
+    ];
+    console.log(JSON.stringify(cases.map(args => dialogKeyAction(...args))));
+    """
+    assert json.loads(run_node(script)) == ["close", "first", "last", "dialog", "none"]
+
+
+def test_dialogs_have_names_modal_state_and_inert_background_support():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    script = APP_JS.read_text(encoding="utf-8")
+    for dialog_id in ("detail", "manage", "keeper", "editor", "pair"):
+        declaration = re.search(rf'<div id="{dialog_id}"[^>]*>', html, re.DOTALL)
+        assert declaration, f"missing #{dialog_id} dialog"
+        tag = declaration.group(0)
+        assert 'role="dialog"' in tag and 'aria-modal="true"' in tag
+        assert 'aria-label' in tag and 'aria-hidden="true"' in tag and "inert" in tag
+    assert 'event.key, event.shiftKey' in script
+    assert 'node.inert = true' in script
+    assert 'node.id === "toast"' in script
+    assert '_dialogOpeners.get(dialog)' in script
+    assert 'opener.focus({ preventScroll: true })' in script
+    assert 'id="toast" class="toast" role="status" aria-live="polite"' in html
+
+
+def test_viewport_keeps_browser_zoom_available():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    viewport = re.search(r'<meta name="viewport" content="([^"]+)">', html)
+    assert viewport
+    content = viewport.group(1)
+    assert "maximum-scale" not in content
+    assert "user-scalable=no" not in content
+
+
+def test_server_declares_security_headers_and_no_development_docs():
+    source = SERVER_APP.read_text(encoding="utf-8")
+    for marker in (
+        'docs_url=None', 'redoc_url=None', 'openapi_url=None',
+        '@app.exception_handler(Exception)',
+        '"X-Content-Type-Options": "nosniff"',
+        '"X-Frame-Options": "DENY"',
+        '"Referrer-Policy": "no-referrer"',
+        '"frame-ancestors \'none\'"',
+        '"frame-src \'none\'"',
+        '"object-src \'none\'"',
+    ):
+        assert marker in source
+    assert '"connect-src \'self\'"' in source
+    assert "unsafe-eval" not in source
+    entrypoint = CONTAINER_ENTRYPOINT.read_text(encoding="utf-8")
+    web_role = entrypoint[entrypoint.index("  web)"):entrypoint.index("  scanner)")]
+    assert "--no-server-header" in web_role
 
 
 def main() -> None:

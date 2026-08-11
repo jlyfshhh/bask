@@ -43,24 +43,35 @@ account, or ongoing internet connection.
 - 📲 **Phone alerts** *(optional)* — get a notification on your phone when an enclosure goes out of range or a sensor drops off. Two-minute setup with the free [ntfy](https://ntfy.sh) app; the Pi only sends outbound, so nothing is exposed.
 - 📱 **Installs like an app** — add Bask to your phone or tablet's home screen and it launches fullscreen with its own icon, like a native app.
 - 👆 **Touch-first UI** — built for a wall-mounted touchscreen, with proximity pairing (hold a sensor near the host to add it).
-- 🪶 **Tiny footprint** — two small Python processes and a vanilla-JS frontend. No build step, no framework, no database server.
+- 🪶 **Tiny footprint** — two small Python processes, a narrowly filtered
+  D-Bus proxy, and a vanilla-JS frontend. No build step, no framework, no
+  database server.
 
 ## How it works
 
 ```
-  Govee H5075 sensors          Host (e.g. Raspberry Pi)          Any display
-  (in your enclosures)     ┌──────────────────────────────┐    (tablet / browser /
-                           │  scanner ──writes──┐         │     smart display)
-   temp / humidity / batt  │  (owns Bluetooth)  ▼         │
-        │  BLE adverts     │              readings.db     │  HTTP   ┌────────────┐
-        └────────────────▶ │  web server ──reads─┘        │ ◀───────│  browser   │
-                           │  (FastAPI + serves the UI)   │  :8080  └────────────┘
-                           └──────────────────────────────┘
+  Govee H5075 sensors             Host (e.g. Raspberry Pi)           Any display
+  (in your enclosures)     ┌──────────────────────────────────┐    (tablet / browser /
+                           │ BlueZ → filtered D-Bus proxy     │     smart display)
+   temp / humidity / batt  │              ↓                   │
+        │  BLE adverts     │ scanner ──writes──┐              │
+        └────────────────▶ │ (unprivileged)    ▼              │
+                           │             readings.db          │  HTTP   ┌────────────┐
+                           │ web server ──reads─┘              │ ◀───────│  browser   │
+                           │ (FastAPI + serves UI)             │  :8080  └────────────┘
+                           └──────────────────────────────────┘
 ```
 
-Two processes share one SQLite file so they never contend for the Bluetooth radio:
+Two Bask processes share one SQLite file. A third, minimal proxy process keeps
+host Bluetooth privileges out of both application processes:
 
-- **`scanner/`** — the only component that touches Bluetooth. Passively listens for Govee advertisements, decodes temperature/humidity/battery, and writes them to `readings.db`.
+- **`scanner/`** — passively listens for Govee advertisements through the
+  filtered proxy, decodes temperature/humidity/battery, and writes them to
+  `readings.db`. It runs without root, Linux capabilities, networking, or the
+  host system-bus socket.
+- **`bask-dbus-proxy`** — authenticates to BlueZ and permits only the object
+  discovery, passive advertisement-monitor registration, and related signal
+  traffic the scanner needs. It cannot reach Bask data or the network.
 - **`server/`** — does no Bluetooth. Reads the database, evaluates each enclosure against its species' (day or night) ranges, and serves the dashboard + JSON API.
 - **`frontend/`** — a plain HTML/CSS/JS dashboard served by the web server.
 
@@ -84,10 +95,12 @@ curl -fsSL https://animalroom.app/bask/install.sh | bash
 ```
 
 This installs Docker when needed, enables Bluetooth passive scanning and local
-hostname discovery, and runs Bask as a restart-safe container with its settings and history in
-`~/bask/data`. When it finishes it prints your dashboard URL —
-`http://<hostname>.local:8080`. Run the same command again any time to update;
-the persistent data directory is never replaced.
+hostname discovery, and runs Bask as restart-safe containers with its settings
+and history in `~/bask/data`. When it finishes it prints your dashboard URL —
+`http://<hostname>.local:8080`. Run the same command again any time to update.
+Updates are staged and validated first, create and verify a private config plus
+SQLite backup, and restore the exact prior images, configuration, and running
+state if startup or health verification fails.
 
 New to Raspberry Pi or unsure what “open Terminal” means? The
 **[beginner's setup guide](docs/SETUP.md)** walks through the supplied-card and
@@ -129,8 +142,9 @@ Then open `http://<hostname>.local:8080` (or `http://<host-ip>:8080`) in any bro
 
 ## Updating
 
-Re-run the one-line installer. It fast-forwards the code and rebuilds the
-container while leaving `~/bask/data` untouched:
+Re-run the one-line installer. It validates the new release in a temporary Git
+worktree before touching the running service, then pulls the new image while
+leaving `~/bask/data` in place:
 
 ```bash
 curl -fsSL https://animalroom.app/bask/install.sh | bash
@@ -142,9 +156,12 @@ and by construction contains no Head Keeper record, session secret, ntfy topic,
 or integration credential. Restoring one never changes authentication: the key
 and the private topic on the machine you restore onto are kept as they are.
 
-`scripts/backup.sh` is the different thing: a private, machine-local filesystem
-backup that *does* include configuration, SQLite history, and Cielo credentials.
-Keep that one to yourself.
+Before every update, the installer uses `scripts/backup.sh` to create and verify
+a private, machine-local archive containing configuration, SQLite history,
+integration credentials, and pending alert state. The same script can be run
+manually. Keep those archives to yourself. Storage defaults beneath `~/bask`;
+external mounts require an explicit opt-in and are never recursively re-owned
+by the installer.
 
 ## Configuration
 
@@ -191,9 +208,17 @@ The account login and reusable token are stored in `vesync-secrets.json` and `ve
 
 Bask can ping your phone when an enclosure goes out of range, loses signal, or recovers. It uses [ntfy](https://ntfy.sh), a free open-source notification service: Bask generates a private, random topic for your install, and the Pi **posts outbound only** — nothing on your network is exposed, and Bask still needs no account.
 
-Setup takes about two minutes: **⚙ Manage → Settings → Set up phone alerts**, install the free ntfy app (App Store / Google Play), and scan the QR code Bask shows you. Tap **Send test** to confirm. Alerts fire on status *transitions* (in-range → out-of-range and back), so you get one ping per event, not a flood.
+Setup takes about two minutes: **⚙ Manage → Settings → Set up phone alerts**, install the free ntfy app (App Store / Google Play), and scan the QR code Bask shows you. Tap **Send test** to confirm. Alerts fire only after a condition has stayed changed for two minutes (in-range → out-of-range and back), which filters brief sensor/range flapping. A failed delivery is saved before it is sent and retried with a capped exponential delay, including after a Bask restart; Settings shows the Head Keeper whether anything is pending and the last success/error. Turning alerts off cancels pending sends, and turning them back on quietly establishes a fresh baseline instead of announcing conditions that arose while alerts were off.
 
 > Your topic name is effectively a password — anyone who knows it can see your alerts (enclosure names and readings only). Bask generates a long random one; keep it private. Self-hosting an ntfy server also works — set `ntfy.server` in `config.json`.
+
+The retry outbox and delivery history live in owner-only `alert-state.json` in
+Bask's private data directory. They are deliberately excluded from the portable
+Manage-page settings export, while `scripts/backup.sh` includes them in the
+private machine backup so a restore cannot silently erase an alert awaiting
+delivery. Delivery is at-least-once: in the rare case the process stops after
+ntfy accepts a message but before Bask records that success, the retry may send
+one duplicate rather than lose the alert.
 
 ## Displaying it
 
@@ -212,7 +237,10 @@ house should be able to glance at it. Changing the setup is not.
 A fresh install generates a **Head Keeper key** and prints it once. It is needed
 to change sensors, enclosures, species ranges, thermostats, cloud integrations,
 phone alerts, backups, and updates. It is stored only as a PBKDF2 hash — Bask
-never writes it back in the clear and has no endpoint that returns it.
+never writes it back in the clear and has no endpoint that returns it. Failed
+unlock attempts are bounded by source, submitted-key fingerprint, and a loose
+global ceiling so the intentionally expensive hash cannot be used as unlimited
+CPU work. Those counters are process-local and contain no reusable credential.
 
 - **The display stays open.** Every read the dashboard needs works without the
   key, so the wall display and everyone's phones are unaffected.
@@ -230,6 +258,9 @@ port off the internet:
 - **Don't expose it to the internet.** Don't port-forward `:8080` or put it on a public network.
 - It binds to `0.0.0.0` so your wall display can reach it. Restrict it with a host firewall, an IoT VLAN, or by binding to a specific interface if you want tighter scoping.
 - For remote access, use a **VPN** (e.g. WireGuard/Tailscale) or an authenticating reverse proxy — never the raw port.
+- A reverse proxy may set `BASK_TRUSTED_PROXY_IP_HEADER` to one of the three
+  allowlisted client-address headers in `.env.example`. Bask ignores forwarded
+  address headers unless you explicitly choose one that your proxy overwrites.
 
 What Bask does on its side:
 
@@ -246,7 +277,13 @@ What Bask does on its side:
   revisions return HTTP `428` and `409`, respectively.
 - **XSS-safe rendering** — all user- and device-provided strings are HTML-escaped, including BLE advertisement names (so a crafted nearby device name can't inject script).
 - **Validated input** — request payloads are length- and range-checked.
-- **Container-isolated** — Bask runs inside its own Docker container. The installer is launched as your normal user and requests `sudo` only for Docker, Bluetooth, and host-service setup. The container receives the host Bluetooth D-Bus socket it needs for scanning, but no other host directories.
+- **Container-isolated** — Bask uses separate read-only Docker services for the
+  dashboard, radio parser, and D-Bus filter. Only the small proxy sees the host
+  Bluetooth socket, through a method-level allowlist; the unprivileged parser
+  receives only the filtered socket and persistent Bask data. All services
+  drop Linux capabilities, disable privilege escalation, and apply memory/PID
+  limits. The installer requests `sudo` only for Docker, Bluetooth, and host
+  service setup.
 
 ## ⚠️ Husbandry disclaimer
 
@@ -255,19 +292,21 @@ The species ranges in `config.example.json` are **starting points compiled from 
 ## Project structure
 
 ```
-scanner/        BLE scanner — owns Bluetooth, writes readings.db
+scanner/        unprivileged BLE parser — writes readings.db
   scanner.py      main loop: passive scan + batched DB writes
   govee.py        H5075 advertisement decoding
   db.py           shared SQLite layer
 server/
   app.py          FastAPI: JSON API, range evaluation, serves the frontend
+  alerts.py       durable, debounced phone-alert outbox and retry state machine
 frontend/         vanilla HTML/CSS/JS dashboard (+ favicon, keep-alive)
 config.example.json   copy to config.json
 Dockerfile        portable multi-architecture Bask container
-compose.yaml      service, Bluetooth D-Bus access, port, and persistent volume
+compose.yaml      isolated web, scanner, and filtered D-Bus proxy services
+dbus-proxy-entrypoint.sh  exact passive-BlueZ method/signal allowlist
 get-bask.sh       one-line installer and safe legacy migration
 deploy/install.sh installs Docker/BlueZ/mDNS and starts the container
-scripts/backup.sh consistent settings + SQLite backup
+scripts/backup.sh private settings + SQLite + integration/alert-state backup
 start.sh          run scanner + web server together (local/dev)
 kiosk.sh          optional fullscreen browser launcher for a host-attached screen
 docs/SETUP.md     complete beginner's guide (Pi OS → one-line install → first sensor)

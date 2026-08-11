@@ -45,27 +45,15 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    # Root, and that is deliberate — do not "harden" this back to a normal user.
-    # Passive BLE scanning goes through BlueZ's AdvertisementMonitor1 D-Bus
-    # interface, and the policy BlueZ ships grants that interface to root only.
-    # A non-root client is refused during D-Bus authentication, which surfaces
-    # as "[Errno 104] Connection reset by peer" and no readings at all. Adding a
-    # local D-Bus policy for an unprivileged uid does not fix it.
-    #
-    # The isolation that matters is still intact: the web service above is
-    # non-root with a read-only root filesystem and no D-Bus socket, so nothing
-    # reachable from the network can talk to the host bus. This container has
-    # network_mode: none, mounts one socket read-only, and does nothing else.
-    user: "0:0"
-    # Dropping every capability also drops CAP_DAC_OVERRIDE, without which even
-    # root cannot write a /data directory owned by another uid.
+    # The parser is deliberately unprivileged. It never receives the host
+    # system bus: a small filtering proxy below authenticates to BlueZ as root
+    # and exposes only the three method calls passive scanning needs. This keeps
+    # attacker-controlled radio payloads away from a root process and away from
+    # every unrelated host D-Bus service.
+    user: "${BASK_UID:-10001}:${BASK_GID:-10001}"
+    read_only: true
     cap_drop:
       - ALL
-    cap_add:
-      - DAC_OVERRIDE
-    # The entrypoint writes its config into /data, so the root fs cannot be
-    # read-only here the way it is for the web service.
-    read_only: false
     security_opt:
       - no-new-privileges:true
     pids_limit: 128
@@ -78,9 +66,73 @@ services:
     environment:
       BASK_DATA_DIR: /data
       BASK_ROLE: scanner
-      DBUS_SYSTEM_BUS_ADDRESS: unix:path=/var/run/dbus/system_bus_socket
+      DBUS_SYSTEM_BUS_ADDRESS: unix:path=/run/bask-dbus/system_bus_socket
+      # The host bus authenticates the root proxy's kernel credentials. Bleak
+      # must claim that same uid during SASL even though the parser itself is
+      # intentionally running as the unprivileged Bask uid.
+      BLEAK_DBUS_AUTH_UID: "0"
+    depends_on:
+      bask-dbus-proxy:
+        condition: service_healthy
     volumes:
       - ${BASK_DATA_PATH:-./data}:/data
-      - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket:ro
+      - bask-dbus:/run/bask-dbus:ro
+    # Runs as the same unprivileged uid/gid as the parser, so this catches a
+    # root-only proxy socket before the installer reports success. The scanner
+    # itself continuously retries BlueZ if the daemon is restarted later.
     healthcheck:
-      disable: true
+      test:
+        - CMD
+        - python
+        - -c
+        - "import socket; s=socket.socket(socket.AF_UNIX); s.settimeout(2); s.connect('/run/bask-dbus/system_bus_socket'); s.close()"
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 5s
+
+  bask-dbus-proxy:
+    image: ghcr.io/jlyfshhh/bask:${BASK_TAG:-latest}
+    container_name: bask-dbus-proxy
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "1m"
+        max-file: "2"
+    # BlueZ only accepts AdvertisementMonitor1 clients authenticated as root.
+    # Keep that privilege in the audited proxy utility, not in Bask's Python
+    # parser. The proxy has no network, app data, writable root, or capabilities.
+    # Authenticate to the host bus as uid 0 while creating the filtered socket
+    # with Bask's data group. The scanner joins that numeric group, so the
+    # socket can stay private instead of being world-connectable.
+    user: "0:${BASK_GID:-10001}"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 32
+    mem_limit: 64m
+    network_mode: none
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=8m,mode=0700
+      # The image declares /data for normal Bask roles. Make the proxy's unused
+      # instance transient instead of letting Docker create an anonymous volume.
+      - /data:rw,nosuid,nodev,noexec,size=1m,mode=0700
+    entrypoint:
+      - /app/dbus-proxy-entrypoint.sh
+    volumes:
+      - /var/run/dbus/system_bus_socket:/host/run/dbus/system_bus_socket:ro
+      - bask-dbus:/run/bask-dbus
+    healthcheck:
+      test: ["CMD-SHELL", "test -S /run/bask-dbus/system_bus_socket"]
+      interval: 5s
+      timeout: 2s
+      retries: 12
+      start_period: 2s
+
+volumes:
+  # Contains one local Unix socket, not persistent application data. A named
+  # volume lets the proxy and scanner share it without exposing a host path.
+  bask-dbus:

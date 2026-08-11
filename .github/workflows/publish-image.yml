@@ -29,9 +29,9 @@ jobs:
   # relationship. Calling the real suite keeps the two from drifting apart.
   verify:
     uses: ./.github/workflows/test.yml
-    # Without this the called workflow gets no secrets, and the privacy scan
-    # would quietly downgrade to "unconfigured" on the path that publishes.
-    secrets: inherit
+    # Pass only the secret required by the reusable verification workflow.
+    secrets:
+      PRIVACY_DENYLIST: ${{ secrets.PRIVACY_DENYLIST }}
 
   # One native runner per architecture. Building arm64 under QEMU works but
   # takes the better part of an hour for an npm install plus a bundler; native

@@ -27,10 +27,24 @@ def main() -> None:
         db.init_db()
 
         from fastapi.testclient import TestClient
-        from server.app import app
+        from server.app import app, keeper_unlock_throttle
         from server import keeper
 
         client = TestClient(app)
+
+        # ── Browser boundary applies to every response ──────────────────────
+        page = client.get("/")
+        assert page.status_code == 200
+        assert page.headers["x-content-type-options"] == "nosniff"
+        assert page.headers["x-frame-options"] == "DENY"
+        assert page.headers["referrer-policy"] == "no-referrer"
+        assert "frame-ancestors 'none'" in page.headers["content-security-policy"]
+        assert "object-src 'none'" in page.headers["content-security-policy"]
+        assert "camera=()" in page.headers["permissions-policy"]
+        # These development surfaces are intentionally absent in the appliance.
+        for path in ("/docs", "/redoc", "/openapi.json"):
+            assert client.get(path).status_code == 404, f"{path} must not be published"
+        print("  browser security headers are present; API documentation is disabled")
 
         def change(target, method: str, path: str, *, json_body=None):
             """Send a setup write the way the browser does: against a snapshot."""
@@ -91,6 +105,20 @@ def main() -> None:
         for path in ("/api/ntfy", "/api/ntfy/qr", "/api/config/export"):
             assert anon.get(path).status_code == 401, f"{path} leaks setup detail; must be gated"
         print("  ntfy topic and config export are gated")
+
+        # ── Unlock hashing cannot be driven without limit ──────────────────
+        keeper_unlock_throttle.reset()
+        attacker = TestClient(app)
+        for _ in range(4):
+            assert attacker.post("/api/keeper/unlock", json={"key": "same-wrong-key"}).status_code == 401
+        limited = attacker.post("/api/keeper/unlock", json={"key": "same-wrong-key"})
+        assert limited.status_code == 429
+        assert int(limited.headers["retry-after"]) > 0
+        # A different candidate remains usable, so a repeated typo does not
+        # lock the Head Keeper out of their own dashboard.
+        assert attacker.post("/api/keeper/unlock", json={"key": key}).status_code == 200
+        keeper_unlock_throttle.reset()
+        print("  repeated unlock guesses are throttled without blocking the real key")
 
         # ── Unlocking ────────────────────────────────────────────────────────
         assert anon.post("/api/keeper/unlock", json={"key": "wrong-key-entirely"}).status_code == 401

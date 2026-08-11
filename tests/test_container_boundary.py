@@ -9,23 +9,28 @@ ROOT = Path(__file__).parent.parent
 def main():
     compose = yaml.safe_load((ROOT / "compose.yaml").read_text())
     services = compose["services"]
-    assert {"bask", "bask-scanner"}.issubset(services)
+    assert {"bask", "bask-scanner", "bask-dbus-proxy"}.issubset(services)
     web = services["bask"]
     scanner = services["bask-scanner"]
+    proxy = services["bask-dbus-proxy"]
 
-    dbus = "/var/run/dbus/system_bus_socket"
-    assert all(dbus not in str(volume) for volume in web.get("volumes", [])), \
+    host_dbus = "/var/run/dbus/system_bus_socket"
+    assert all(host_dbus not in str(volume) for volume in web.get("volumes", [])), \
         "the network-facing web service can reach host D-Bus"
-    assert any(dbus in str(volume) for volume in scanner.get("volumes", []))
+    assert all(host_dbus not in str(volume) for volume in scanner.get("volumes", [])), \
+        "the radio parser must never receive the host system bus"
+    assert any(host_dbus in str(volume) for volume in proxy.get("volumes", [])), \
+        "the filtering proxy needs the host system bus"
     assert not scanner.get("ports"), "the scanner must not publish a network port"
     assert scanner.get("network_mode") == "none"
 
-    # Shared floor for both services.
-    for name, service in (("web", web), ("scanner", scanner)):
+    # Shared floor for all three trust domains.
+    for name, service in (("web", web), ("scanner", scanner), ("proxy", proxy)):
         assert "ALL" in service.get("cap_drop", []), name
         assert "no-new-privileges:true" in service.get("security_opt", []), name
         assert service.get("pids_limit"), name
         assert service.get("mem_limit"), name
+        assert service.get("read_only") is True, name
 
     # The web service is the network-facing one, so it carries full hardening.
     assert web.get("user") and not str(web["user"]).startswith("0:")
@@ -34,27 +39,57 @@ def main():
     assert "DAC_OVERRIDE" not in web.get("cap_add", []), \
         "the network-facing service must not regain write override"
 
-    # The scanner is root on purpose. BlueZ grants AdvertisementMonitor1 — the
-    # interface passive scanning needs — to root only, and refuses anyone else
-    # at D-Bus authentication. An earlier attempt to run this as uid 10001
-    # stopped every sensor reading for seven hours, and the previous version of
-    # this test asserted the broken configuration, so it could never have
-    # caught it. These asserts now pin the requirement in place.
-    assert str(scanner.get("user")) == "0:0", \
-        "the scanner must stay root or BlueZ refuses passive scanning"
-    assert "DAC_OVERRIDE" in scanner.get("cap_add", []), \
-        "cap_drop ALL removes CAP_DAC_OVERRIDE, which root needs to write /data"
-    # What compensates for that root: the scanner is unreachable from anywhere.
+    # The scanner parses attacker-controlled radio packets, so keep it
+    # unprivileged and give it only a filtered D-Bus socket plus app data.
+    assert scanner.get("user") and not str(scanner["user"]).startswith("0:")
+    assert not scanner.get("cap_add")
     assert scanner.get("network_mode") == "none"
     assert not scanner.get("ports")
-    assert all(
-        str(volume).endswith(":ro")
-        for volume in scanner.get("volumes", [])
-        if dbus in str(volume)
-    ), "the D-Bus socket must be mounted read-only"
+    scanner_env = scanner.get("environment", {})
+    assert scanner_env.get("DBUS_SYSTEM_BUS_ADDRESS") == \
+        "unix:path=/run/bask-dbus/system_bus_socket"
+    assert str(scanner_env.get("BLEAK_DBUS_AUTH_UID")) == "0"
+    assert any(str(v) == "bask-dbus:/run/bask-dbus:ro"
+               for v in scanner.get("volumes", []))
+    assert scanner.get("depends_on", {}).get("bask-dbus-proxy", {}).get("condition") \
+        == "service_healthy"
+    assert "system_bus_socket" in " ".join(
+        str(part) for part in scanner.get("healthcheck", {}).get("test", [])
+    ), "scanner health must test the proxy socket as its non-root uid"
+
+    # Only the small audited proxy authenticates as root. It cannot reach the
+    # network or application data and its host-bus mount is protocol-filtered.
+    assert str(proxy.get("user", "")).startswith("0:")
+    assert proxy.get("network_mode") == "none"
+    assert not proxy.get("ports")
+    assert not proxy.get("cap_add")
+    assert any(
+        str(v) == f"{host_dbus}:/host/run/dbus/system_bus_socket:ro"
+        for v in proxy.get("volumes", [])
+    )
+    assert all("/data" not in str(v) for v in proxy.get("volumes", [])), \
+        "the D-Bus proxy must not receive Bask data"
+
+    proxy_script = (ROOT / "dbus-proxy-entrypoint.sh").read_text()
+    for rule in (
+        "ObjectManager.GetManagedObjects@/",
+        "AdvertisementMonitorManager1.RegisterMonitor@/org/bluez/*",
+        "AdvertisementMonitorManager1.UnregisterMonitor@/org/bluez/*",
+        "ObjectManager.InterfacesAdded@/",
+        "ObjectManager.InterfacesRemoved@/",
+        "Properties.PropertiesChanged@/org/bluez/*",
+        "umask 007",
+    ):
+        assert rule in proxy_script, rule
+    assert "--talk=org.bluez" not in proxy_script, \
+        "broad BlueZ access would allow pairing and device control"
+    assert "--see=org.bluez" not in proxy_script, \
+        "the exact call/signal rules already provide required name visibility"
 
     dockerfile = (ROOT / "Dockerfile").read_text()
     assert "USER bask:bask" in dockerfile
+    assert "xdg-dbus-proxy" in dockerfile
+    assert "dbus-proxy-entrypoint.sh" in dockerfile
     for label in (
         "org.opencontainers.image.source",
         "org.opencontainers.image.revision",

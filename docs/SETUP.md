@@ -121,17 +121,22 @@ being fully open so you can set a new key.
 Optional next steps:
 
 - **Add to Home Screen** from your phone or tablet browser to install Bask like
-  an app.
+  an app. A plain LAN HTTP address remains usable, but secure-context PWA
+  behavior varies by browser; see [Browser security and installation](BROWSER-SECURITY.md).
 - Open **⚙ Manage → Settings → Set up phone alerts** to connect the optional
-  ntfy notifications.
+  ntfy notifications. Bask waits for a change to remain stable for two minutes,
+  then saves it before sending; transient failures retry automatically across
+  restarts. The same panel shows pending delivery and the last success/error.
 - See [Herpstat thermostats](../README.md#herpstat-thermostats-optional) and
   [Displaying Bask](../README.md#displaying-it) for additional integrations and
   wall-display options.
 
 ## Updating Bask
 
-Run the same installer command again. It downloads the latest code and rebuilds
-the container without replacing `~/bask/data`:
+Run the same installer command again. It stages and checks the latest release,
+creates and verifies a private settings-and-history backup, then updates the
+containers without replacing `~/bask/data`. If the new release cannot start or
+become healthy, the installer restores the previous version and running state:
 
 ```bash
 curl -fsSL https://animalroom.app/bask/install.sh | bash
@@ -139,7 +144,8 @@ curl -fsSL https://animalroom.app/bask/install.sh | bash
 
 Use **⚙ Manage → Settings → Download backup** periodically. Technical users can
 also run `~/bask/scripts/backup.sh` for a private archive containing settings,
-SQLite history, and configured Cielo credentials.
+SQLite history, configured integration credentials, and any pending phone-alert
+delivery state.
 
 ## Troubleshooting
 

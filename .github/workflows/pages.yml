@@ -22,6 +22,8 @@ concurrency:
 jobs:
   verify:
     uses: ./.github/workflows/test.yml
+    secrets:
+      PRIVACY_DENYLIST: ${{ secrets.PRIVACY_DENYLIST }}
 
   deploy:
     needs: verify

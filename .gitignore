@@ -7,9 +7,11 @@ __pycache__/
 readings.db
 readings.db-shm
 readings.db-wal
+alert-state.json
 data/
 backups/
 .env
+.privacy-denylist
 
 # Personal configuration — copy config.example.json to config.json and edit
 config.json

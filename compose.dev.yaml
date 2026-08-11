@@ -12,3 +12,6 @@ services:
   bask-scanner:
     build: .
     image: bask-local:dev
+  bask-dbus-proxy:
+    build: .
+    image: bask-local:dev
