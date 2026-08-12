@@ -9,7 +9,12 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 collect_terms() {
   if [[ -n "${PRIVACY_DENYLIST:-}" ]]; then
-    printf '%s\n' "$PRIVACY_DENYLIST" | tr ',' '\n'
+    # Strip comments before splitting on commas. A comment containing a comma
+    # would otherwise be cut into fragments that no longer start with '#', and
+    # the loop below would take them for terms — a stray "and" from a prose
+    # comment matches most of the codebase and fails the build for nothing.
+    # The file path never hit this because it does not comma-split.
+    printf '%s\n' "$PRIVACY_DENYLIST" | sed 's/#.*$//' | tr ',' '\n'
   elif [[ -f .privacy-denylist ]]; then
     cat .privacy-denylist
     printf '\n'
