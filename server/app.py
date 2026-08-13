@@ -1258,12 +1258,17 @@ def update_sensor(mac: str, payload: SensorUpdate, _: None = Keeper,
             if sensor["mac"].upper() == mac.upper():
                 sensor["name"] = payload.name
                 sensor["species"] = payload.species
-                # Absent rather than null when unset, so an ordinary sensor's
-                # config entry is unchanged from before this field existed.
-                if payload.role:
-                    sensor["role"] = payload.role
-                else:
-                    sensor.pop("role", None)
+                # Only touch the role when the caller actually sent the field.
+                # The rename dialog in the frontend posts {name, species} and
+                # nothing else, so treating "absent" as "clear it" would quietly
+                # demote the outdoor sensor back to a room sensor every time it
+                # was renamed — and the only symptom would be the weather
+                # reappearing in the room average weeks later.
+                if "role" in payload.model_fields_set:
+                    if payload.role:
+                        sensor["role"] = payload.role
+                    else:
+                        sensor.pop("role", None)
                 return
         raise HTTPException(404, "Sensor not found")
 

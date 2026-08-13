@@ -192,6 +192,26 @@ def test_outdoor_sensor_is_filed_apart_from_the_room(db) -> None:
     print("  ✓ an outdoor sensor is filed apart from the room")
 
 
+def test_renaming_a_sensor_keeps_its_outdoor_role() -> None:
+    """The frontend's rename posts {name, species} and nothing else.
+
+    If an absent role means "clear it", renaming the porch sensor demotes it to
+    a room sensor, and the only symptom is the weather quietly reappearing in
+    the room average weeks later.
+    """
+    from server.app import SensorUpdate
+
+    renamed = SensorUpdate(name="Porch")
+    assert "role" not in renamed.model_fields_set, "rename must not carry a role"
+
+    explicit_clear = SensorUpdate(name="Porch", role=None)
+    assert "role" in explicit_clear.model_fields_set, "an explicit null must be distinguishable"
+
+    set_outdoor = SensorUpdate(name="Porch", role="outdoor")
+    assert set_outdoor.role == "outdoor"
+    print("  ✓ a rename cannot silently clear the outdoor role")
+
+
 def test_early_wake_does_not_swallow_a_tick() -> None:
     """A sleep that returns a hair early must not land in the previous bucket.
 
@@ -248,8 +268,9 @@ def main() -> None:
         for check in checks:
             check(db)
         test_early_wake_does_not_swallow_a_tick()
+        test_renaming_a_sensor_keeps_its_outdoor_role()
         test_units_are_normalised_to_celsius()
-    print(f"Climate log: {len(checks) + 2} checks passed.")
+    print(f"Climate log: {len(checks) + 3} checks passed.")
 
 
 if __name__ == "__main__":
