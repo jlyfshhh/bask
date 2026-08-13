@@ -169,11 +169,15 @@ def test_outdoor_sensor_is_filed_apart_from_the_room(db) -> None:
         ],
         "enclosures": [], "settings": {"temp_unit": "F"},
     }
+    # Timestamped now: a reading old enough to be stale is deliberately dropped,
+    # which is what test_a_dropped_out_sensor_leaves_a_gap_not_a_flat_line
+    # covers. This check is about *where* a live reading is filed.
+    fresh = int(time.time())
     with db.get_conn() as conn:
         for mac, temp in (("AA:00:01", 29.0), ("AA:00:02", 1.5)):
             conn.execute("INSERT OR REPLACE INTO readings"
                          " (mac,temp_c,humidity,battery,rssi,updated_at)"
-                         " VALUES (?,?,?,?,?,?)", (mac, temp, 50.0, 90, -60, 1))
+                         " VALUES (?,?,?,?,?,?)", (mac, temp, 50.0, 90, -60, fresh))
 
     app._thermostats.clear()
     class NoCielo:
@@ -190,6 +194,46 @@ def test_outdoor_sensor_is_filed_apart_from_the_room(db) -> None:
     assert by_source.get("outdoor") == {"AA:00:02"}, by_source
     assert by_source.get("sensor") == {"AA:00:01"}, by_source
     print("  ✓ an outdoor sensor is filed apart from the room")
+
+
+def test_a_dropped_out_sensor_leaves_a_gap_not_a_flat_line(db) -> None:
+    """A sensor that stops reporting must stop appearing in the log.
+
+    `readings` keeps the last value per sensor forever with no notion of whether
+    it is still true. Logged unconditionally, a marginal sensor that drops out
+    writes that same value once a minute indefinitely — and a flat line is a
+    far worse lie than a gap, because it looks like data.
+    """
+    import server.app as app
+
+    now = int(time.time())
+    cfg = {
+        "sensors": [
+            {"mac": "BB:00:01", "name": "Live"},
+            {"mac": "BB:00:02", "name": "Porch", "role": "outdoor"},
+        ],
+        "enclosures": [], "settings": {"temp_unit": "F", "stale_after_minutes": 10},
+    }
+    with db.get_conn() as conn:
+        # One reporting now, one last heard from half an hour ago.
+        conn.execute("INSERT OR REPLACE INTO readings VALUES (?,?,?,?,?,?)",
+                     ("BB:00:01", 22.0, 50.0, 90, -60, now))
+        conn.execute("INSERT OR REPLACE INTO readings VALUES (?,?,?,?,?,?)",
+                     ("BB:00:02", 29.0, 97.0, 100, -88, now - 1800))
+
+    app._thermostats.clear()
+    class NoCielo:
+        def public_status(self): return {"configured": False}
+    original, app.cielo = app.cielo, NoCielo()
+    try:
+        samples, _ = app._collect_climate(cfg)
+    finally:
+        app.cielo = original
+
+    series = {s["series"] for s in samples}
+    assert "BB:00:01" in series, "a live sensor was dropped"
+    assert "BB:00:02" not in series, "a stale sensor was logged as if it were current"
+    print("  ✓ a dropped-out sensor leaves a gap, not a flat line")
 
 
 def test_renaming_a_sensor_keeps_its_outdoor_role() -> None:
@@ -258,6 +302,7 @@ def main() -> None:
         test_prune_drops_raw_but_never_rollups,
         test_auto_resolution_picks_hourly_for_long_windows,
         test_outdoor_sensor_is_filed_apart_from_the_room,
+        test_a_dropped_out_sensor_leaves_a_gap_not_a_flat_line,
     ]
     with tempfile.TemporaryDirectory() as tmp:
         os.environ["BASK_DATA_DIR"] = tmp

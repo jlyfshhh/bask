@@ -405,9 +405,18 @@ def _collect_climate(cfg: dict) -> tuple[list[dict], list[dict]]:
     # average somewhere the room never went.
     roles = {(s.get("mac") or "").upper(): s.get("role") for s in cfg.get("sensors", [])}
     configured = set(roles)
+    # `readings` holds the latest value per sensor forever, with no notion of
+    # whether it is still true. Logging it unconditionally means a sensor that
+    # drops out — a weak one on a porch, a dead battery — writes its last
+    # reading once a minute indefinitely, and the trend shows a flat line where
+    # the honest answer is a gap. Reuse the keeper's own staleness threshold
+    # rather than inventing a second definition of "too old to believe".
+    stale_cutoff = int(time.time()) - cfg.get("settings", {}).get("stale_after_minutes", 10) * 60
     for r in db.get_all_readings():
         mac = (r.get("mac") or "").upper()
         if mac not in configured:
+            continue
+        if (r.get("updated_at") or 0) < stale_cutoff:
             continue
         label = labels.get(mac, mac)
         source = "outdoor" if roles.get(mac) == "outdoor" else "sensor"
