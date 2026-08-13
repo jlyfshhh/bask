@@ -449,18 +449,32 @@ def _collect_climate(cfg: dict) -> tuple[list[dict], list[dict]]:
     return samples, events
 
 
+def _tick_stamp(now: float) -> int:
+    """The interval boundary this sample belongs to.
+
+    Rounds to the nearest boundary rather than flooring. asyncio.sleep may
+    return a hair early, and flooring 14:31:59.99 puts the sample in the 14:31
+    bucket — overwriting the tick already there, while the next full-interval
+    sleep skips 14:32 altogether. Observed in production as a 60s gap followed
+    by a 120s one, with nothing in the log to show for it.
+    """
+    return int(round(now / CLIMATE_INTERVAL) * CLIMATE_INTERVAL)
+
+
 async def _climate_loop():
-    last_rollup = 0.0
+    # Not zero: that would make the first tick after every restart also run a
+    # rollup, delaying the sample that restart was meant to start producing.
+    last_rollup = time.time()
     while True:
         # Align to the interval so every tick lands on a round timestamp and
         # series from different instruments line up exactly. Without this the
         # tick drifts by however long the last write took, and a week later no
         # two sources share a single timestamp.
         now = time.time()
-        await asyncio.sleep(CLIMATE_INTERVAL - (now % CLIMATE_INTERVAL))
+        target = (now // CLIMATE_INTERVAL + 1) * CLIMATE_INTERVAL
+        await asyncio.sleep(max(0.0, target - now))
         try:
-            recorded_at = int(time.time())
-            recorded_at -= recorded_at % CLIMATE_INTERVAL
+            recorded_at = _tick_stamp(time.time())
             samples, events = _collect_climate(load_config())
             if samples:
                 await asyncio.to_thread(db.write_climate_tick, recorded_at, samples, events)

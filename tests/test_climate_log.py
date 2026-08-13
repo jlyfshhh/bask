@@ -152,6 +152,26 @@ def test_auto_resolution_picks_hourly_for_long_windows(db) -> None:
     print("  ✓ auto resolution scales with the window")
 
 
+def test_early_wake_does_not_swallow_a_tick() -> None:
+    """A sleep that returns a hair early must not land in the previous bucket.
+
+    Found in production, not in review: the first deployment logged 14:30,
+    14:31, 14:33. Flooring the clock put the 14:32 sample into the 14:31 bucket,
+    where it overwrote a real reading, and the following full-interval sleep
+    skipped 14:32 entirely. Nothing errored, so nothing said so.
+    """
+    from server.app import CLIMATE_INTERVAL, _tick_stamp
+
+    boundary = 1786600020 - (1786600020 % CLIMATE_INTERVAL)
+    assert _tick_stamp(boundary - 0.01) == boundary, "early wake fell into the previous bucket"
+    assert _tick_stamp(boundary + 0.30) == boundary, "late wake left its own bucket"
+    assert _tick_stamp(boundary) == boundary
+    # Two consecutive boundaries must stay distinct, or a tick is lost to an
+    # overwrite rather than recorded.
+    assert _tick_stamp(boundary + CLIMATE_INTERVAL - 0.01) == boundary + CLIMATE_INTERVAL
+    print("  ✓ a marginally early wake still records its own tick")
+
+
 def test_units_are_normalised_to_celsius() -> None:
     """The sources genuinely disagree, and a display preference must never be
     able to retroactively reinterpret stored history."""
@@ -186,8 +206,9 @@ def main() -> None:
         db.init_db()
         for check in checks:
             check(db)
+        test_early_wake_does_not_swallow_a_tick()
         test_units_are_normalised_to_celsius()
-    print(f"Climate log: {len(checks) + 1} checks passed.")
+    print(f"Climate log: {len(checks) + 2} checks passed.")
 
 
 if __name__ == "__main__":
