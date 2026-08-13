@@ -8,6 +8,10 @@ Design notes for the Raspberry Pi:
   * `history`    - sampled time-series (throttled), pruned to 24h.
   * `discovered` - every Govee device the scanner currently sees, for the
     "add sensor" UI. This replaces the old second in-server BLE scanner.
+  * `climate_*`  - the long-term cross-instrument log (sensors, thermostats and
+    the mini-split on one aligned clock), written by the web server rather than
+    the scanner because that is the process holding the Herpstat and Cielo
+    state. See the climate section below.
 """
 import sqlite3
 import os
@@ -66,6 +70,103 @@ def init_db() -> None:
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(readings)")}
         if "battery" not in cols:
             conn.execute("ALTER TABLE readings ADD COLUMN battery INTEGER")
+
+        init_climate(conn)
+
+
+# ── Climate log ──────────────────────────────────────────────────────────────
+# `history` answers "what has this one sensor done lately" and is pruned at 24h.
+# The climate log answers a different question: what was the *whole room* doing,
+# across every instrument, over months — which is what you need to work out the
+# mini-split setpoint that holds an enclosure overnight, or why the morning ramp
+# takes three hours to settle when the lamps ramp in one.
+#
+# Two design decisions worth stating, because both are expensive to change once
+# there is a year of data:
+#
+# 1. Series are interned into `climate_series` and samples reference them by id,
+#    so a sample row carries an integer rather than a repeated MAC and metric
+#    name. Measured against this room's real shape — 27 sensors, 12 thermostat
+#    outputs, one mini-split, 93 series at a 60-second tick — that is 3.1 MB a
+#    day of raw, so the fortnight kept below is about 43 MB, and the hourly
+#    rollup that outlives it costs 64 KB a day, or roughly 24 MB a year.
+#
+# 2. Every temperature is stored in CELSIUS, whatever the instrument reported.
+#    The sources genuinely disagree — the Govee scanner works in Celsius, Cielo
+#    reports Fahrenheit, and Bask labels Herpstat readings with the keeper's
+#    *display* preference rather than the thermostat's own unit. A log that
+#    stored "whatever arrived" would be silently unusable the day someone
+#    toggles that preference, and the damage would be invisible until a trend
+#    line bent for no reason. Convert on the way in; format on the way out.
+
+CLIMATE_SCHEMA = (
+    # The dimension table. `label` is the human name at the time the series was
+    # first seen, kept so a chart of a since-deleted enclosure still reads as
+    # something other than a MAC address.
+    """
+    CREATE TABLE IF NOT EXISTS climate_series (
+        id     INTEGER PRIMARY KEY,
+        source TEXT NOT NULL,
+        series TEXT NOT NULL,
+        metric TEXT NOT NULL,
+        label  TEXT,
+        UNIQUE (source, series, metric)
+    )
+    """,
+    # Raw samples, pruned to RAW_RETENTION_DAYS. WITHOUT ROWID because the
+    # primary key *is* the whole row apart from the value.
+    """
+    CREATE TABLE IF NOT EXISTS climate_samples (
+        recorded_at INTEGER NOT NULL,
+        series_id   INTEGER NOT NULL,
+        value       REAL,
+        PRIMARY KEY (recorded_at, series_id)
+    ) WITHOUT ROWID
+    """,
+    # Hourly aggregates, kept indefinitely. Min and max are carried alongside
+    # the mean because an average hides exactly the thing that matters here: a
+    # mean of 74 is fine, and a mean of 74 that dipped to 66 is not.
+    """
+    CREATE TABLE IF NOT EXISTS climate_hourly (
+        hour      INTEGER NOT NULL,
+        series_id INTEGER NOT NULL,
+        min_value REAL,
+        avg_value REAL,
+        max_value REAL,
+        samples   INTEGER,
+        PRIMARY KEY (hour, series_id)
+    ) WITHOUT ROWID
+    """,
+    # Categorical state — Cielo mode, power, fan. Sampling these every minute
+    # would store the same string 1,440 times a day to record two changes, so
+    # they are written only when the value differs from the last one logged.
+    """
+    CREATE TABLE IF NOT EXISTS climate_events (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        recorded_at INTEGER NOT NULL,
+        source      TEXT NOT NULL,
+        series      TEXT NOT NULL,
+        key         TEXT NOT NULL,
+        value       TEXT
+    )
+    """,
+    # No secondary index on climate_samples. Its primary key already leads with
+    # recorded_at, and every query against raw is a time-range scan — raw only
+    # ever covers the last fortnight, so "this one series over all time" is a
+    # question for the rollup. Measured: the index was costing 3.7 MB a day to
+    # serve nothing.
+    "CREATE INDEX IF NOT EXISTS idx_climate_hourly_series ON climate_hourly(series_id, hour)",
+    "CREATE INDEX IF NOT EXISTS idx_climate_events_at ON climate_events(recorded_at)",
+)
+
+# Raw samples are for reading a transition minute by minute; anything older than
+# this is answered from the hourly rollup, which is ~40x smaller.
+RAW_RETENTION_DAYS = 14
+
+
+def init_climate(conn: sqlite3.Connection) -> None:
+    for statement in CLIMATE_SCHEMA:
+        conn.execute(statement)
 
 
 # ── Writer side (scanner) ────────────────────────────────────────────────────
@@ -162,3 +263,168 @@ def get_history(mac: str, hours: int = 6) -> list[dict]:
             (mac.upper(), cutoff),
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+# ── Climate log: writer ──────────────────────────────────────────────────────
+
+def _series_id(conn: sqlite3.Connection, source: str, series: str, metric: str,
+               label: str | None) -> int:
+    """Intern a series, refreshing the label if the keeper has renamed it."""
+    row = conn.execute(
+        "SELECT id, label FROM climate_series WHERE source=? AND series=? AND metric=?",
+        (source, series, metric),
+    ).fetchone()
+    if row:
+        if label and row["label"] != label:
+            conn.execute("UPDATE climate_series SET label=? WHERE id=?", (label, row["id"]))
+        return int(row["id"])
+    cur = conn.execute(
+        "INSERT INTO climate_series (source, series, metric, label) VALUES (?, ?, ?, ?)",
+        (source, series, metric, label),
+    )
+    return int(cur.lastrowid)
+
+
+def write_climate_tick(recorded_at: int, samples: list[dict], events: list[dict]) -> int:
+    """Persist one aligned sample tick.
+
+    Every row carries the same `recorded_at` on purpose. The whole point of this
+    log is to compare instruments against each other — what the mini-split was
+    doing while a given enclosure fell two degrees — and joining series that
+    were each stamped whenever their own poller happened to fire means
+    interpolating before you can ask the question. One tick, one timestamp.
+
+    `samples` is [{source, series, metric, value, label}, ...] with value in
+    canonical units (Celsius for temperatures). `events` is the same shape with
+    `key`/`value` strings, and is written only where the value has changed.
+    """
+    written = 0
+    with get_conn() as conn:
+        for s in samples:
+            if s.get("value") is None:
+                continue
+            sid = _series_id(conn, s["source"], s["series"], s["metric"], s.get("label"))
+            # A tick that fires twice for the same second must not explode; the
+            # later value simply wins.
+            conn.execute(
+                "INSERT INTO climate_samples (recorded_at, series_id, value) VALUES (?, ?, ?) "
+                "ON CONFLICT(recorded_at, series_id) DO UPDATE SET value=excluded.value",
+                (recorded_at, sid, float(s["value"])),
+            )
+            written += 1
+
+        for e in events:
+            value = None if e.get("value") is None else str(e["value"])
+            prior = conn.execute(
+                "SELECT value FROM climate_events WHERE source=? AND series=? AND key=? "
+                "ORDER BY recorded_at DESC, id DESC LIMIT 1",
+                (e["source"], e["series"], e["key"]),
+            ).fetchone()
+            if prior is not None and prior["value"] == value:
+                continue
+            conn.execute(
+                "INSERT INTO climate_events (recorded_at, source, series, key, value) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (recorded_at, e["source"], e["series"], e["key"], value),
+            )
+            written += 1
+    return written
+
+
+def roll_up_climate(now: int | None = None) -> int:
+    """Fold completed hours of raw samples into `climate_hourly`, then prune.
+
+    Only whole elapsed hours are folded: rolling up the hour currently in
+    progress would write a partial aggregate that the next run would have to
+    correct, and a min/max that is wrong until the hour ends is worse than one
+    that is briefly absent.
+    """
+    now = int(time.time()) if now is None else int(now)
+    current_hour = now - (now % 3600)
+    cutoff = now - RAW_RETENTION_DAYS * 86400
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO climate_hourly (hour, series_id, min_value, avg_value, max_value, samples)
+            SELECT recorded_at - (recorded_at % 3600) AS hour,
+                   series_id, MIN(value), AVG(value), MAX(value), COUNT(*)
+              FROM climate_samples
+             WHERE recorded_at < ?
+             GROUP BY hour, series_id
+            ON CONFLICT(hour, series_id) DO UPDATE SET
+                min_value=excluded.min_value, avg_value=excluded.avg_value,
+                max_value=excluded.max_value, samples=excluded.samples
+            """,
+            (current_hour,),
+        )
+        # Raw rows go; the rollup above has already absorbed them, and it is
+        # kept indefinitely.
+        cur = conn.execute("DELETE FROM climate_samples WHERE recorded_at < ?", (cutoff,))
+        return cur.rowcount or 0
+
+
+# ── Climate log: reader ──────────────────────────────────────────────────────
+
+def get_climate_series() -> list[dict]:
+    with get_conn() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT * FROM climate_series ORDER BY source, label, metric")]
+
+
+def get_climate(start: int, end: int, resolution: str = "auto",
+                sources: list[str] | None = None,
+                metrics: list[str] | None = None) -> dict:
+    """Series over a window. `resolution` is 'raw', 'hourly', or 'auto'.
+
+    'auto' picks hourly for anything longer than two days, because a week of
+    raw samples is a quarter of a million points and no chart — and no reader —
+    benefits from that.
+    """
+    if resolution == "auto":
+        resolution = "raw" if (end - start) <= 2 * 86400 else "hourly"
+
+    where = ["s.recorded_at >= ?", "s.recorded_at <= ?"] if resolution == "raw" \
+        else ["s.hour >= ?", "s.hour <= ?"]
+    args: list = [start, end]
+    if sources:
+        where.append("c.source IN (%s)" % ",".join("?" * len(sources)))
+        args += sources
+    if metrics:
+        where.append("c.metric IN (%s)" % ",".join("?" * len(metrics)))
+        args += metrics
+
+    if resolution == "raw":
+        sql = ("SELECT s.recorded_at AS at, s.value AS avg_value, s.value AS min_value, "
+               "s.value AS max_value, c.id, c.source, c.series, c.metric, c.label "
+               "FROM climate_samples s JOIN climate_series c ON c.id = s.series_id "
+               "WHERE " + " AND ".join(where) + " ORDER BY s.recorded_at")
+    else:
+        sql = ("SELECT s.hour AS at, s.avg_value, s.min_value, s.max_value, "
+               "c.id, c.source, c.series, c.metric, c.label "
+               "FROM climate_hourly s JOIN climate_series c ON c.id = s.series_id "
+               "WHERE " + " AND ".join(where) + " ORDER BY s.hour")
+
+    out: dict[int, dict] = {}
+    with get_conn() as conn:
+        for r in conn.execute(sql, args):
+            key = int(r["id"])
+            entry = out.setdefault(key, {
+                "source": r["source"], "series": r["series"],
+                "metric": r["metric"], "label": r["label"], "points": [],
+            })
+            entry["points"].append({
+                "at": int(r["at"]),
+                "avg": r["avg_value"],
+                "min": r["min_value"],
+                "max": r["max_value"],
+            })
+    return {"resolution": resolution, "start": start, "end": end,
+            "series": list(out.values())}
+
+
+def get_climate_events(start: int, end: int) -> list[dict]:
+    with get_conn() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT recorded_at, source, series, key, value FROM climate_events "
+            "WHERE recorded_at >= ? AND recorded_at <= ? ORDER BY recorded_at",
+            (start, end))]

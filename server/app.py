@@ -354,6 +354,128 @@ async def _shed_display_loop():
         await asyncio.sleep(SHED_POLL)
 
 
+# ── Climate log ──────────────────────────────────────────────────────────────
+# Every other poller in this file keeps only the latest value. That is the right
+# shape for a dashboard and useless for the question a keeper actually ends up
+# asking: what setpoint holds this room overnight in February, and why does the
+# morning still take three hours to settle when the lamps ramp in one?
+#
+# This samples every instrument onto one clock and writes it down.
+
+CLIMATE_INTERVAL = 60      # seconds between ticks
+CLIMATE_ROLLUP_EVERY = 3600
+
+
+def f_to_c(f: float) -> float:
+    return (f - 32) * 5 / 9
+
+
+def _to_c(value, unit: str | None):
+    """Normalise a temperature to Celsius given the unit it was reported in."""
+    if value is None:
+        return None
+    return f_to_c(float(value)) if (unit or "F").upper() == "F" else float(value)
+
+
+def _collect_climate(cfg: dict) -> tuple[list[dict], list[dict]]:
+    """Snapshot every instrument. Returns (samples, events)."""
+    samples: list[dict] = []
+    events: list[dict] = []
+
+    # Sensor labels: prefer the enclosure and position, because "Vivarium 1 Warm
+    # Side" is what the keeper will look for in a chart a year from now, and the
+    # bare sensor nickname may not say which enclosure it ended up in.
+    labels: dict[str, str] = {}
+    for s in cfg.get("sensors", []):
+        mac = (s.get("mac") or "").upper()
+        if s.get("name"):
+            labels[mac] = s["name"]
+    for e in cfg.get("enclosures", []):
+        for s in e.get("sensors", []):
+            mac = (s.get("mac") or "").upper()
+            labels[mac] = f"{e.get('name')} {s.get('position', '')}".strip()
+
+    # Govee sensors. The scanner already stores these in Celsius.
+    configured = {(s.get("mac") or "").upper() for s in cfg.get("sensors", [])}
+    for r in db.get_all_readings():
+        mac = (r.get("mac") or "").upper()
+        if mac not in configured:
+            continue
+        label = labels.get(mac, mac)
+        samples.append({"source": "sensor", "series": mac, "metric": "temp_c",
+                        "value": r.get("temp_c"), "label": label})
+        samples.append({"source": "sensor", "series": mac, "metric": "humidity",
+                        "value": r.get("humidity"), "label": label})
+
+    # Herpstat outputs. Bask labels these with the keeper's *display* preference
+    # rather than the thermostat's own unit — that is the best information
+    # available here, and it is converted rather than stored raw so a later
+    # change to that preference cannot retroactively reinterpret the history.
+    unit = cfg.get("settings", {}).get("temp_unit", "F")
+    for ip, status in _thermostats.items():
+        if not status.get("reachable"):
+            continue
+        unit_name = status.get("name") or ip
+        for index, o in enumerate(status.get("outputs", []), start=1):
+            # Keyed by position, not by nickname: renaming an output in the
+            # Herpstat UI must not orphan its history.
+            key = f"{ip}#{index}"
+            label = f"{unit_name} / {o.get('name') or index}"
+            samples.append({"source": "herpstat", "series": key, "metric": "temp_c",
+                            "value": _to_c(o.get("temp"), unit), "label": label})
+            samples.append({"source": "herpstat", "series": key, "metric": "setpoint_c",
+                            "value": _to_c(o.get("setpoint"), unit), "label": label})
+            samples.append({"source": "herpstat", "series": key, "metric": "output_pct",
+                            "value": o.get("output_pct"), "label": label})
+
+    # The mini-split. Its own thermometer is the one the unit acts on, so it is
+    # logged as a first-class series rather than trusted as "the room" — the
+    # gap between it and the sensors is itself the thing worth measuring.
+    c = cielo.public_status()
+    if c.get("configured") and not c.get("stale") and c.get("online"):
+        key = c.get("selected_device_id") or "cielo"
+        label = c.get("name") or "Mini-split"
+        cu = c.get("temp_unit", "F")
+        samples.append({"source": "cielo", "series": key, "metric": "temp_c",
+                        "value": _to_c(c.get("temperature"), cu), "label": label})
+        samples.append({"source": "cielo", "series": key, "metric": "humidity",
+                        "value": c.get("humidity"), "label": label})
+        samples.append({"source": "cielo", "series": key, "metric": "target_c",
+                        "value": _to_c(c.get("target"), cu), "label": label})
+        for field in ("mode", "power", "fan"):
+            events.append({"source": "cielo", "series": key, "key": field,
+                           "value": c.get(field)})
+
+    return samples, events
+
+
+async def _climate_loop():
+    last_rollup = 0.0
+    while True:
+        # Align to the interval so every tick lands on a round timestamp and
+        # series from different instruments line up exactly. Without this the
+        # tick drifts by however long the last write took, and a week later no
+        # two sources share a single timestamp.
+        now = time.time()
+        await asyncio.sleep(CLIMATE_INTERVAL - (now % CLIMATE_INTERVAL))
+        try:
+            recorded_at = int(time.time())
+            recorded_at -= recorded_at % CLIMATE_INTERVAL
+            samples, events = _collect_climate(load_config())
+            if samples:
+                await asyncio.to_thread(db.write_climate_tick, recorded_at, samples, events)
+        except Exception as e:
+            log.warning(f"climate sample failed: {e}")
+        try:
+            if time.time() - last_rollup >= CLIMATE_ROLLUP_EVERY:
+                pruned = await asyncio.to_thread(db.roll_up_climate)
+                last_rollup = time.time()
+                if pruned:
+                    log.info(f"climate rollup complete, pruned {pruned} raw samples")
+        except Exception as e:
+            log.warning(f"climate rollup failed: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()
@@ -362,12 +484,14 @@ async def lifespan(app: FastAPI):
     humidifier_poller = asyncio.create_task(humidifier.loop())
     notifier = asyncio.create_task(_notify_loop())
     shed_poller = asyncio.create_task(_shed_display_loop())
+    climate_logger = asyncio.create_task(_climate_loop())
     yield
     poller.cancel()
     cielo_poller.cancel()
     humidifier_poller.cancel()
     notifier.cancel()
     shed_poller.cancel()
+    climate_logger.cancel()
 
 
 # No CORS middleware on purpose. The dashboard is served from the SAME origin as
@@ -1279,6 +1403,44 @@ def list_thermostats():
     out = [{**t, "status": _thermostats.get(t.get("ip"), {})}
            for t in cfg.get("thermostats", [])]
     return {"thermostats": out, "temp_unit": cfg["settings"]["temp_unit"]}
+
+
+@app.get("/api/climate/series")
+def climate_series():
+    """Every series the climate log has ever seen, for building a query."""
+    return {"series": db.get_climate_series(), "temp_unit": load_config()["settings"]["temp_unit"]}
+
+
+@app.get("/api/climate")
+def climate_history(hours: int = 24, resolution: str = "auto",
+                    source: str | None = None, metric: str | None = None):
+    """Cross-instrument history over the last `hours`.
+
+    Temperatures come back in Celsius, as stored. Converting here would mean
+    the same endpoint returned different numbers depending on a display setting,
+    which is a poor property for something whose whole job is comparison over
+    time; `temp_unit` is reported so a caller can format.
+    """
+    hours = max(1, min(int(hours), 24 * 400))
+    if resolution not in ("auto", "raw", "hourly"):
+        raise HTTPException(400, "resolution must be auto, raw or hourly")
+    end = int(time.time())
+    start = end - hours * 3600
+    data = db.get_climate(
+        start, end, resolution,
+        sources=[s for s in (source or "").split(",") if s] or None,
+        metrics=[m for m in (metric or "").split(",") if m] or None,
+    )
+    data["temp_unit"] = load_config()["settings"]["temp_unit"]
+    return data
+
+
+@app.get("/api/climate/events")
+def climate_events(hours: int = 24):
+    """Mode, power and fan changes — the things that explain a step in a chart."""
+    hours = max(1, min(int(hours), 24 * 400))
+    end = int(time.time())
+    return {"events": db.get_climate_events(end - hours * 3600, end)}
 
 
 @app.post("/api/thermostats/test")

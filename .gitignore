@@ -13,6 +13,10 @@ backups/
 
 # Personal configuration — copy config.example.json to config.json and edit
 config.json
+# The local list of terms the privacy scan checks for. It exists precisely
+# because these words must not reach a public repository, so it is the one file
+# that must never be committed by an absent-minded `git add -A`.
+.privacy-denylist
 cielo-secrets.json
 vesync-secrets.json
 vesync-token.json
