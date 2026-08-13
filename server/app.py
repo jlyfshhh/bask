@@ -396,15 +396,24 @@ def _collect_climate(cfg: dict) -> tuple[list[dict], list[dict]]:
             labels[mac] = f"{e.get('name')} {s.get('position', '')}".strip()
 
     # Govee sensors. The scanner already stores these in Celsius.
-    configured = {(s.get("mac") or "").upper() for s in cfg.get("sensors", [])}
+    #
+    # A sensor marked `role: outdoor` is filed under its own source. It is the
+    # same hardware read the same way — the distinction exists because the
+    # outdoor reading is the *independent* variable in every question this log
+    # is for. Filed as an ordinary sensor it would be swept into any average of
+    # the room, and a porch at 95F in July or 35F in January would drag that
+    # average somewhere the room never went.
+    roles = {(s.get("mac") or "").upper(): s.get("role") for s in cfg.get("sensors", [])}
+    configured = set(roles)
     for r in db.get_all_readings():
         mac = (r.get("mac") or "").upper()
         if mac not in configured:
             continue
         label = labels.get(mac, mac)
-        samples.append({"source": "sensor", "series": mac, "metric": "temp_c",
+        source = "outdoor" if roles.get(mac) == "outdoor" else "sensor"
+        samples.append({"source": source, "series": mac, "metric": "temp_c",
                         "value": r.get("temp_c"), "label": label})
-        samples.append({"source": "sensor", "series": mac, "metric": "humidity",
+        samples.append({"source": source, "series": mac, "metric": "humidity",
                         "value": r.get("humidity"), "label": label})
 
     # Herpstat outputs. Bask labels these with the keeper's *display* preference
@@ -1214,6 +1223,12 @@ class SensorPayload(BaseModel):
 class SensorUpdate(BaseModel):
     name: str = Field(min_length=1, max_length=64)
     species: str | None = Field(None, max_length=64)
+    # "outdoor" marks a sensor as the reference reading outside the room. It
+    # changes nothing about how the sensor is read — it is the same hardware
+    # broadcasting the same packet — only how it is filed in the climate log.
+    # Without it a porch sensor is indistinguishable from an enclosure sensor,
+    # and every "average across the room" quietly averages in the weather.
+    role: Literal["outdoor"] | None = None
 
 
 @app.get("/api/sensors")
@@ -1243,6 +1258,12 @@ def update_sensor(mac: str, payload: SensorUpdate, _: None = Keeper,
             if sensor["mac"].upper() == mac.upper():
                 sensor["name"] = payload.name
                 sensor["species"] = payload.species
+                # Absent rather than null when unset, so an ordinary sensor's
+                # config entry is unchanged from before this field existed.
+                if payload.role:
+                    sensor["role"] = payload.role
+                else:
+                    sensor.pop("role", None)
                 return
         raise HTTPException(404, "Sensor not found")
 

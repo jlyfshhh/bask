@@ -152,6 +152,46 @@ def test_auto_resolution_picks_hourly_for_long_windows(db) -> None:
     print("  ✓ auto resolution scales with the window")
 
 
+def test_outdoor_sensor_is_filed_apart_from_the_room(db) -> None:
+    """The porch sensor is the independent variable, not part of the room.
+
+    Same hardware, same packet, same reader — but filed as an ordinary sensor
+    it gets swept into any average of the room, and a porch at 35F in January
+    drags that average somewhere the room never went. This is the whole reason
+    the role exists, so it is worth a check that fails if it stops working.
+    """
+    import server.app as app
+
+    cfg = {
+        "sensors": [
+            {"mac": "AA:00:01", "name": "Vivarium 1 Warm Side"},
+            {"mac": "AA:00:02", "name": "Porch", "role": "outdoor"},
+        ],
+        "enclosures": [], "settings": {"temp_unit": "F"},
+    }
+    with db.get_conn() as conn:
+        for mac, temp in (("AA:00:01", 29.0), ("AA:00:02", 1.5)):
+            conn.execute("INSERT OR REPLACE INTO readings"
+                         " (mac,temp_c,humidity,battery,rssi,updated_at)"
+                         " VALUES (?,?,?,?,?,?)", (mac, temp, 50.0, 90, -60, 1))
+
+    app._thermostats.clear()
+    class NoCielo:
+        def public_status(self): return {"configured": False}
+    original, app.cielo = app.cielo, NoCielo()
+    try:
+        samples, _ = app._collect_climate(cfg)
+    finally:
+        app.cielo = original
+
+    by_source = {}
+    for s in samples:
+        by_source.setdefault(s["source"], set()).add(s["series"])
+    assert by_source.get("outdoor") == {"AA:00:02"}, by_source
+    assert by_source.get("sensor") == {"AA:00:01"}, by_source
+    print("  ✓ an outdoor sensor is filed apart from the room")
+
+
 def test_early_wake_does_not_swallow_a_tick() -> None:
     """A sleep that returns a hair early must not land in the previous bucket.
 
@@ -197,6 +237,7 @@ def main() -> None:
         test_rollup_excludes_the_hour_in_progress,
         test_prune_drops_raw_but_never_rollups,
         test_auto_resolution_picks_hourly_for_long_windows,
+        test_outdoor_sensor_is_filed_apart_from_the_room,
     ]
     with tempfile.TemporaryDirectory() as tmp:
         os.environ["BASK_DATA_DIR"] = tmp
