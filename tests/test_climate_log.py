@@ -509,6 +509,40 @@ def test_every_actuator_and_its_diagnostics_are_captured(db) -> None:
     print("  ✓ actuators, battery, signal and the active schedule are all logged")
 
 
+def test_dashboard_smooths_output_but_the_log_keeps_the_raw_sample() -> None:
+    """A dimming output's instantaneous reading is not its duty cycle.
+
+    Pascal showed 0% on the dashboard while the thermostat was at 100% — one
+    poll landing in a gap of a modulated waveform, and the obvious reading was
+    "his heat has failed". Smoothing fixes the display. What must not happen is
+    the smoothed figure reaching the log, because a trend can average for
+    itself and cannot recover detail averaged away before storage.
+    """
+    import server.app as app
+
+    app._output_history.clear()
+    parsed = {"outputs": [{"name": "Probe", "output_pct": 0, "heating": False}]}
+
+    # Four polls at full power, then one that lands in a gap.
+    for pct in (100, 100, 100, 100):
+        parsed["outputs"][0]["output_pct"] = pct
+        app._smooth_outputs("10.0.0.9", parsed)
+    parsed["outputs"][0]["output_pct"] = 0
+    out = app._smooth_outputs("10.0.0.9", parsed)["outputs"][0]
+
+    assert out["output_pct_raw"] == 0, "the raw sample must survive for the log"
+    assert out["output_pct"] == 80, f"expected the mean of 100,100,100,100,0; got {out['output_pct']}"
+    assert out["heating"] is True, "a bulb at 80% duty must not read as idle"
+
+    # A genuinely dead output must still read dead rather than being propped up.
+    app._output_history.clear()
+    for _ in range(8):
+        parsed["outputs"][0]["output_pct"] = 0
+        dead = app._smooth_outputs("10.0.0.9", parsed)["outputs"][0]
+    assert dead["output_pct"] == 0 and dead["heating"] is False
+    print("  ✓ display smooths a modulated output; the log keeps the raw sample")
+
+
 def test_renaming_a_sensor_keeps_its_outdoor_role() -> None:
     """The frontend's rename posts {name, species} and nothing else.
 
@@ -615,6 +649,7 @@ def main() -> None:
             check(db)
         test_early_wake_does_not_swallow_a_tick()
         test_renaming_a_sensor_keeps_its_outdoor_role()
+        test_dashboard_smooths_output_but_the_log_keeps_the_raw_sample()
         test_units_are_normalised_to_celsius()
         test_history_query_bounds()
     print(f"Climate log: {len(checks) + 4} checks passed.")

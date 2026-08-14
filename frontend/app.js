@@ -1003,6 +1003,12 @@ async function pairLoadEnc() {
   _configRevision = snapshot.revision;
   _pairEnc = snapshot.enclosures;
   _species = snapshot.species;
+  // The pairing sheet resolves each filled slot to a sensor name through
+  // _sensors. Loading the snapshot without setting it left that map empty
+  // whenever pairing was opened before Manage, so every slot silently fell
+  // back to its MAC address — the one screen where knowing which sensor is
+  // which is the entire point.
+  _sensors = snapshot.sensors;
 }
 
 async function pairPoll() {

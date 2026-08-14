@@ -315,6 +315,36 @@ def _parse_herpstat(ip: str, raw: dict, name_override, temp_unit: str = "F") -> 
     }
 
 
+# A dimming output modulates the mains waveform, so `poweroutput` is whatever
+# the poll happened to catch. A single sample can read 0 on a bulb that is
+# working perfectly — which is exactly what happened: Pascal showed 0% while
+# the thermostat was at 100%, and the obvious reading was "his heat is off".
+#
+# Smoothing over the last minute keeps the number honest in both directions.
+# An output genuinely stuck at zero stays at zero; one that is modulating stops
+# flickering between extremes and reads as the duty cycle it actually is.
+OUTPUT_SMOOTHING = 6          # polls, at HERPSTAT_POLL seconds each
+_output_history: dict[str, list[float]] = {}
+
+
+def _smooth_outputs(ip: str, parsed: dict) -> dict:
+    for index, o in enumerate(parsed.get("outputs", []), start=1):
+        raw_pct = o.get("output_pct")
+        if raw_pct is None:
+            continue
+        key = f"{ip}#{index}"
+        window = _output_history.setdefault(key, [])
+        window.append(float(raw_pct))
+        del window[:-OUTPUT_SMOOTHING]
+        # Keep the instantaneous value too: the climate log wants the raw
+        # sample, and a caller that needs "right now" should not have to
+        # un-average it.
+        o["output_pct_raw"] = raw_pct
+        o["output_pct"] = round(sum(window) / len(window))
+        o["heating"] = o["output_pct"] > 0
+    return parsed
+
+
 async def _herpstat_loop():
     while True:
         try:
@@ -325,8 +355,8 @@ async def _herpstat_loop():
                 try:
                     raw = await asyncio.to_thread(_fetch_herpstat, ip)
                     source_unit = t.get("temp_unit", "F")
-                    _thermostats[ip] = _parse_herpstat(
-                        ip, raw, t.get("name"), source_unit)
+                    _thermostats[ip] = _smooth_outputs(ip, _parse_herpstat(
+                        ip, raw, t.get("name"), source_unit))
                 except Exception as e:
                     prev = _thermostats.get(ip, {})
                     _thermostats[ip] = {"ip": ip, "name": t.get("name") or prev.get("name") or ip,
@@ -488,8 +518,12 @@ def _collect_climate(cfg: dict) -> tuple[list[dict], list[dict]]:
                             "value": _to_c(o.get("temp"), source_unit), "label": label})
             samples.append({"source": "herpstat", "series": key, "metric": "setpoint_c",
                             "value": _to_c(o.get("setpoint"), source_unit), "label": label})
+            # The raw sample, not the smoothed one shown on the dashboard. A
+            # trend can average for itself; it cannot recover detail that was
+            # averaged away before it was stored.
             samples.append({"source": "herpstat", "series": key, "metric": "output_pct",
-                            "value": o.get("output_pct"), "label": label})
+                            "value": o.get("output_pct_raw", o.get("output_pct")),
+                            "label": label})
             # An output going into alarm or error is a discrete moment, and the
             # thing you want when a trend bends is the timestamp it started.
             events.append({"source": "herpstat", "series": key, "key": "alarm",
