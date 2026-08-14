@@ -735,24 +735,35 @@ a.btn { text-decoration: none; }
 .keeper-error:empty { display: none; }
 .keeper-error { color: var(--danger); font-size: 0.9rem; margin: 10px 0 0; }
 
+/* ── Phone: safe areas ──────────────────────────────────────────────────────
+   index.html asks for viewport-fit=cover, which lets the page use the full
+   screen including the area behind the notch and the home indicator. Nothing
+   ever claimed that space back, so the sticky topbar rendered underneath the
+   status bar and the logo sat behind the clock. */
+#topbar {
+  padding-left: max(18px, env(safe-area-inset-left));
+  padding-right: max(18px, env(safe-area-inset-right));
+  padding-top: max(10px, env(safe-area-inset-top));
+}
+.manage-overlay, .sheet-overlay {
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+#grid { padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+
 /* ── Manage screens on a phone ───────────────────────────────────────────────
    The 760px breakpoint above was written for the dashboard and stopped there.
-   Everything behind ⚙ Manage kept desktop assumptions — two fixed columns,
-   150-180px minimums inside flex rows, nowrap labels — so on a 390pt screen
-   the pairing sheet scrolled sideways, the nearest-sensor card slid off the
-   edge, and enclosure names collapsed to a single letter.
+   Everything behind ⚙ Manage kept desktop assumptions, so on a 390pt screen
+   the pairing sheet clipped enclosure names to their first two letters and cut
+   the COOL slot off the right edge.
 
    Pairing is the most phone-bound task in the app: you are stood at the
    enclosure holding the sensor. It should not be the screen that breaks. */
 @media (max-width: 760px) {
   /* Tabs scroll deliberately rather than clipping "…ecies" mid-word. */
-  .mtabs {
-    overflow-x: auto;
-    scrollbar-width: none;
-    -webkit-overflow-scrolling: touch;
-  }
+  .mtabs { overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
   .mtabs::-webkit-scrollbar { display: none; }
-  .mtab { flex: 0 0 auto; scroll-snap-align: start; }
+  .mtab { flex: 0 0 auto; }
 
   .pane { max-width: 100%; }
   .pane-toolbar { flex-wrap: wrap; }
@@ -761,22 +772,23 @@ a.btn { text-decoration: none; }
      narrow to show its own label. */
   .range-grid { grid-template-columns: 1fr; gap: 14px; }
 
-  /* Steppers were running off the right edge — the "To 8 PM" control was
-     simply unreachable. Let the value flex instead of pushing. */
+  /* Steppers ran off the right edge — the "To 8 PM" control was unreachable. */
   .stepper { gap: 8px; }
   .stepper .sval { min-width: 0; flex: 1; }
 
-  /* Pairing: stack rather than scroll. A slot that keeps a 150px floor inside
-     a flex row forces the whole sheet wider than the screen. */
+  /* Pairing. The row is name-beside-slots; at this width the two slots win and
+     the name is squeezed to nothing, which is why enclosures read "Te" and
+     "Ac". Stack the name above, then give the slots half the width each. */
   .pair-body { max-width: 100%; }
-  .pt-row { flex-wrap: wrap; }
-  .pt-slot { min-width: 0; flex: 1 1 100%; }
-  .pt-name { flex: 1 1 100%; font-size: 1rem; }
-  .pts-who { max-width: none; white-space: normal; }
-  .pt-newform { flex-wrap: wrap; }
-  .pt-newform input { flex: 1 1 100%; min-width: 0; }
+  .ptarget { flex-direction: column; align-items: stretch; gap: 10px; padding: 12px 14px; }
+  .pt-name { font-size: 1.05rem; flex: none; }
+  .pt-sides { display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; }
+  .pt-side { min-width: 0; }
+  .pts-who { max-width: none; white-space: normal; overflow-wrap: anywhere; }
+
+  .pn-main { flex-wrap: wrap; gap: 10px; }
+  .pn-id { font-size: 1.45rem; flex: 1 1 100%; overflow-wrap: anywhere; }
 
   /* Nothing in a modal may push the document sideways. */
-  .manage-panel, .sheet, .pair-body, .pane { overflow-x: hidden; }
-  .manage-panel { max-width: 100%; }
+  .manage-panel, .sheet, .pair-body, .pane { overflow-x: hidden; max-width: 100%; }
 }
