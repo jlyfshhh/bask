@@ -851,3 +851,8 @@ a.btn { text-decoration: none; }
   /* Nothing in a modal may push the document sideways. */
   .manage-panel, .sheet, .pair-body, .pane { overflow-x: hidden; max-width: 100%; }
 }
+
+/* "+N more" reveals the rest of the chips. Neutral rather than severity-tinted:
+   it is a control, not a status. */
+.sb-chip.more { background: var(--surface2); border-style: dashed; }
+.sb-chip.more .sbc-name { color: var(--muted); }

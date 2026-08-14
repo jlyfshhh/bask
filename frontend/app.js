@@ -6,6 +6,7 @@ const REFRESH_MS = 15000;
 let _dash = null;
 let _species = [];
 let _sensors = [];
+let _lastData = null;
 let _enclosures = [];
 let _tempUnit = "F";
 let _configRevision = null;
@@ -284,6 +285,9 @@ async function refreshDashboard() {
     const data = await api("GET", "/api/dashboard");
     _dash = data;
     _tempUnit = data.temp_unit;
+    // Kept so the banner can re-render itself when expanded without waiting
+    // for the next poll.
+    _lastData = data;
     renderSummary(data.counts);
     renderStatusBanner(data);
     renderPeriod(data);
@@ -463,6 +467,19 @@ function renderStatusBanner(data) {
     : danger ? `${danger} out of range`
     : `${rest} drifting`;
 
+  // Chips are more scannable than a paragraph but they cost vertical space,
+  // and eleven of them push the enclosures off a phone screen entirely. Show
+  // the worst few — they are sorted worst-first — and let the rest be asked
+  // for. The count in the headline never hides anything.
+  const CAP = 6;
+  const hidden = Math.max(0, chips.length - CAP);
+  const shown = _bannerExpanded ? chips : chips.slice(0, CAP);
+  const more = hidden && !_bannerExpanded
+    ? `<button type="button" class="sb-chip more" onclick="expandBanner()"
+         aria-label="Show ${hidden} more">
+         <span class="sbc-name">+${hidden}</span><span class="sbc-why">more</span></button>`
+    : "";
+
   el.innerHTML = `
     <div class="sb-head">
       <span class="sb-icon">${anyDanger ? "⚠" : "•"}</span>
@@ -470,7 +487,14 @@ function renderStatusBanner(data) {
       <span class="sb-sub">${summary}</span>
       ${battNote}
     </div>
-    <div class="sb-chips">${chips.join("")}</div>`;
+    <div class="sb-chips">${shown.join("")}${more}</div>`;
+}
+
+let _bannerExpanded = false;
+
+function expandBanner() {
+  _bannerExpanded = true;
+  if (_lastData) renderStatusBanner(_lastData);
 }
 
 // Day/night indicator — shows which range set is currently being applied.
