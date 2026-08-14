@@ -681,10 +681,17 @@ a.btn { text-decoration: none; }
   .summary { order: 3; width: 100%; gap: 6px; flex: none; }
   .pill { font-size: 0.9rem; padding: 6px 12px; }
   .pill .dot { width: 9px; height: 9px; }
-  /* Keep climate, day/night, and Manage together on one row. */
-  .room-climate { min-width: 0; max-width: 148px; padding: 5px 9px; }
-  .period-badge { padding: 6px 10px; font-size: 0.85rem; }
-  .manage-btn { padding: 8px 12px; font-size: 0.9rem; }
+  /* Climate chips: exactly two per row, each using the full half. The old
+     148px cap truncated the chip's own reading — the outdoor tile showed
+     "80.6F 99.9% 9.." and clipped the very comparison it exists to make. */
+  .room-climate {
+    min-width: 0; max-width: none; padding: 6px 10px;
+    flex: 1 1 calc(50% - 5px);
+  }
+  .rc-state { white-space: normal; text-align: left; grid-column: 1 / -1; }
+  /* Day/night and Manage share the last row rather than each taking one. */
+  .period-badge { padding: 6px 12px; font-size: 0.85rem; order: 4; }
+  .manage-btn { padding: 8px 14px; font-size: 0.9rem; order: 5; margin-left: auto; }
 
   /* Status banner: stack it and stop the enclosure list from
      wrapping into a tall column beside the headline. */
