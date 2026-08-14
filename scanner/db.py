@@ -183,6 +183,7 @@ CLIMATE_ROLLUP_LATE_HOURS = 2
 def init_climate(conn: sqlite3.Connection) -> None:
     for statement in CLIMATE_SCHEMA:
         conn.execute(statement)
+    merge_legacy_cielo(conn)
 
 
 # ── Writer side (scanner) ────────────────────────────────────────────────────
@@ -298,7 +299,96 @@ def _series_id(conn: sqlite3.Connection, source: str, series: str, metric: str,
         "INSERT INTO climate_series (source, series, metric, label) VALUES (?, ?, ?, ?)",
         (source, series, metric, label),
     )
-    return int(cur.lastrowid)
+    new_id = int(cur.lastrowid)
+    # Creation is exactly the right moment to look for history stranded under an
+    # older key: it happens once, and only for a series that has just appeared.
+    _adopt_legacy_cielo(conn, source, series, metric, new_id)
+    return new_id
+
+
+LEGACY_CIELO_SERIES = "cielo"
+
+
+def merge_legacy_cielo(conn: sqlite3.Connection) -> int:
+    """Sweep any mini-split history still filed under the old constant key.
+
+    Called at startup as well as at series creation, because those are two
+    different situations and only one of them is covered by creation:
+
+      * upgrading with no new key yet — the merge happens when the first
+        pseudonymous series is interned;
+      * a database where both keys already exist because the upgrade ran and
+        wrote a tick before this repair existed. Nothing is ever created again
+        for that key, so creation-time adoption would never fire and the split
+        would be permanent.
+
+    Idempotent, and a no-op once there is no legacy series left.
+    """
+    merged = 0
+    rows = conn.execute(
+        "SELECT DISTINCT metric FROM climate_series WHERE source='cielo' AND series=?",
+        (LEGACY_CIELO_SERIES,),
+    ).fetchall()
+    for row in rows:
+        metric = row["metric"]
+        target = conn.execute(
+            "SELECT id, series FROM climate_series "
+            "WHERE source='cielo' AND metric=? AND series != ?",
+            (metric, LEGACY_CIELO_SERIES),
+        ).fetchall()
+        if len(target) != 1:
+            continue
+        _adopt_legacy_cielo(conn, "cielo", target[0]["series"], metric,
+                            int(target[0]["id"]))
+        merged += 1
+    return merged
+
+
+def _adopt_legacy_cielo(conn: sqlite3.Connection, source: str, series: str,
+                        metric: str, new_id: int) -> None:
+    """Carry pre-pseudonym mini-split history onto the new series key.
+
+    The mini-split used to be logged under the constant key "cielo". That was a
+    bug: the public status deliberately omits the cloud device id, so the lookup
+    always fell through to the fallback, and two controllers would have been
+    spliced into a single line. The key is now a stable per-device pseudonym.
+
+    Correct, but on its own it strands every reading taken before the change
+    under the old key — and a trend that stops dead on an upgrade date is the
+    one thing a log built for months of comparison must never do.
+
+    Only merged where it is unambiguous: exactly one pseudonymous key exists, so
+    the legacy rows can only have come from that device. A house running two
+    controllers cannot know which one they belong to, so there the old series is
+    left alone as history rather than guessed at.
+    """
+    if source != "cielo" or series == LEGACY_CIELO_SERIES:
+        return
+    legacy = conn.execute(
+        "SELECT id FROM climate_series WHERE source='cielo' AND series=? AND metric=?",
+        (LEGACY_CIELO_SERIES, metric),
+    ).fetchone()
+    if legacy is None:
+        return
+    distinct = conn.execute(
+        "SELECT COUNT(DISTINCT series) FROM climate_series "
+        "WHERE source='cielo' AND series != ?", (LEGACY_CIELO_SERIES,),
+    ).fetchone()[0]
+    if distinct != 1:
+        return
+
+    legacy_id = int(legacy["id"])
+    # OR REPLACE rather than a plain UPDATE: if both keys somehow hold a row for
+    # the same instant, the newer one wins instead of the migration aborting on
+    # a primary-key conflict and leaving the history half-moved.
+    conn.execute("UPDATE OR REPLACE climate_samples SET series_id=? WHERE series_id=?",
+                 (new_id, legacy_id))
+    conn.execute("UPDATE OR REPLACE climate_hourly SET series_id=? WHERE series_id=?",
+                 (new_id, legacy_id))
+    conn.execute("DELETE FROM climate_series WHERE id=?", (legacy_id,))
+    # Events key on the text, not the interned id.
+    conn.execute("UPDATE climate_events SET series=? WHERE source='cielo' AND series=?",
+                 (series, LEGACY_CIELO_SERIES))
 
 
 def write_climate_tick(recorded_at: int, samples: list[dict], events: list[dict]) -> int:

@@ -332,6 +332,132 @@ def test_a_dropped_out_sensor_leaves_a_gap_not_a_flat_line(db) -> None:
     print("  ✓ a dropped-out sensor leaves a gap, not a flat line")
 
 
+def _clear_cielo(db) -> None:
+    """Give the mini-split checks a clean slate inside the shared database.
+
+    These two are about how many controller keys exist, and earlier checks in
+    this file legitimately create a cielo series of their own. Without this the
+    merge correctly refuses as ambiguous and the check fails for a reason that
+    has nothing to do with what it is testing.
+    """
+    with db.get_conn() as conn:
+        conn.execute("DELETE FROM climate_samples WHERE series_id IN "
+                     "(SELECT id FROM climate_series WHERE source='cielo')")
+        conn.execute("DELETE FROM climate_hourly WHERE series_id IN "
+                     "(SELECT id FROM climate_series WHERE source='cielo')")
+        conn.execute("DELETE FROM climate_events WHERE source='cielo'")
+        conn.execute("DELETE FROM climate_series WHERE source='cielo'")
+
+
+def test_pseudonymous_cielo_key_adopts_its_own_history(db) -> None:
+    """Changing the mini-split's series key must not sever its trend.
+
+    The key moved from the constant "cielo" to a per-device pseudonym, which
+    fixed a real bug — two controllers would have been spliced into one line.
+    But the readings taken before that change are the baseline every setpoint
+    comparison rests on, and a line that stops dead on an upgrade date is
+    exactly the failure this log exists to avoid.
+    """
+    _clear_cielo(db)
+    for i in range(5):
+        db.write_climate_tick(1786700000 + i * 60, [
+            {"source": "cielo", "series": "cielo", "metric": "temp_c",
+             "value": 21.0 + i, "label": "Animal Room"}],
+            [{"source": "cielo", "series": "cielo", "key": "mode", "value": "auto"}])
+
+    db.write_climate_tick(1786700300, [
+        {"source": "cielo", "series": "cielo-abc123", "metric": "temp_c",
+         "value": 26.0, "label": "Animal Room"}], [])
+
+    keys = [s for s in db.get_climate_series() if s["source"] == "cielo"]
+    assert len(keys) == 1, f"history was left split across {len(keys)} keys: {keys}"
+    assert keys[0]["series"] == "cielo-abc123"
+
+    got = db.get_climate(1786699000, 1786701000, "raw")
+    pts = [p for s in got["series"] if s["source"] == "cielo" for p in s["points"]]
+    assert len(pts) == 6, f"expected 5 legacy points plus 1 new, got {len(pts)}"
+    assert min(p["avg"] for p in pts) == 21.0, "the oldest reading did not survive"
+
+    events = [e for e in db.get_climate_events(1786699000, 1786701000)
+              if e["source"] == "cielo"]
+    assert events and all(e["series"] == "cielo-abc123" for e in events), events
+    print("  ✓ a new mini-split key adopts the history logged under the old one")
+
+
+def test_startup_repairs_an_already_split_mini_split(db) -> None:
+    """The split can predate the repair, and creation-time adoption misses it.
+
+    If the upgrade ran and wrote even one tick before this existed, both keys
+    are already in the table. The new key is never created again, so a hook on
+    creation would never fire and the trend would stay severed for good. This
+    is the case the live database was actually in.
+    """
+    _clear_cielo(db)
+    db.write_climate_tick(1786720000, [
+        {"source": "cielo", "series": "cielo", "metric": "temp_c",
+         "value": 20.0, "label": "Animal Room"}], [])
+    with db.get_conn() as conn:
+        # Both keys present, exactly as an interrupted upgrade leaves them.
+        conn.execute("INSERT INTO climate_series (source, series, metric, label) "
+                     "VALUES ('cielo', 'cielo-live', 'temp_c', 'Animal Room')")
+    db.write_climate_tick(1786720060, [
+        {"source": "cielo", "series": "cielo-live", "metric": "temp_c",
+         "value": 21.0, "label": "Animal Room"}], [])
+
+    keys = {s["series"] for s in db.get_climate_series()
+            if s["source"] == "cielo" and s["metric"] == "temp_c"}
+    assert keys == {"cielo", "cielo-live"}, f"expected a split to repair: {keys}"
+
+    with db.get_conn() as conn:
+        assert db.merge_legacy_cielo(conn) == 1
+
+    keys = {s["series"] for s in db.get_climate_series()
+            if s["source"] == "cielo" and s["metric"] == "temp_c"}
+    assert keys == {"cielo-live"}, keys
+    got = db.get_climate(1786719000, 1786721000, "raw")
+    pts = sorted(p["avg"] for s in got["series"] if s["source"] == "cielo"
+                 for p in s["points"])
+    assert pts == [20.0, 21.0], f"history did not survive the repair: {pts}"
+
+    # Running it again must do nothing rather than thrash.
+    with db.get_conn() as conn:
+        assert db.merge_legacy_cielo(conn) == 0
+    print("  ✓ startup repairs a split that already happened, and is idempotent")
+
+
+def test_a_second_controller_cannot_take_the_first_ones_history(db) -> None:
+    """Swapping to another mini-split must start a new line, not inherit one.
+
+    Bask tracks one selected controller, so the adoption above happens at the
+    moment the first pseudonymous key appears. What has to hold afterwards is
+    that a *different* controller showing up later gets its own series and
+    leaves the adopted history where it belongs — otherwise the two units'
+    behaviour is silently averaged into one trend.
+    """
+    _clear_cielo(db)
+    db.write_climate_tick(1786710000, [
+        {"source": "cielo", "series": "cielo", "metric": "humidity",
+         "value": 50.0, "label": "Old"}], [])
+    db.write_climate_tick(1786710060, [
+        {"source": "cielo", "series": "cielo-aaa", "metric": "humidity",
+         "value": 51.0, "label": "One"}], [])
+    # The legacy rows have now been adopted by the only controller there was.
+    db.write_climate_tick(1786710120, [
+        {"source": "cielo", "series": "cielo-bbb", "metric": "humidity",
+         "value": 52.0, "label": "Two"}], [])
+
+    by_key = {s["series"]: s for s in db.get_climate_series()
+              if s["source"] == "cielo" and s["metric"] == "humidity"}
+    assert set(by_key) == {"cielo-aaa", "cielo-bbb"}, by_key
+
+    got = db.get_climate(1786709000, 1786711000, "raw")
+    points = {s["series"]: sorted(p["avg"] for p in s["points"])
+              for s in got["series"] if s["source"] == "cielo"}
+    assert points["cielo-aaa"] == [50.0, 51.0], points
+    assert points["cielo-bbb"] == [52.0], points
+    print("  ✓ a second controller starts its own line and steals nothing")
+
+
 def test_renaming_a_sensor_keeps_its_outdoor_role() -> None:
     """The frontend's rename posts {name, species} and nothing else.
 
@@ -423,6 +549,9 @@ def main() -> None:
         test_auto_resolution_picks_hourly_for_long_windows,
         test_outdoor_sensor_is_filed_apart_from_the_room,
         test_a_dropped_out_sensor_leaves_a_gap_not_a_flat_line,
+        test_pseudonymous_cielo_key_adopts_its_own_history,
+        test_startup_repairs_an_already_split_mini_split,
+        test_a_second_controller_cannot_take_the_first_ones_history,
     ]
     with tempfile.TemporaryDirectory() as tmp:
         os.environ["BASK_DATA_DIR"] = tmp
