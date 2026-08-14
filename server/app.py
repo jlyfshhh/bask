@@ -462,6 +462,14 @@ def _collect_climate(cfg: dict) -> tuple[list[dict], list[dict]]:
                         "value": r.get("temp_c"), "label": label})
         samples.append({"source": source, "series": mac, "metric": "humidity",
                         "value": r.get("humidity"), "label": label})
+        # Battery and signal explain the gaps. When a series stops, the next
+        # question is always "did it die or did it move out of range", and
+        # without these the log cannot answer it — the porch sensor cost an
+        # hour of guessing precisely because nothing recorded its signal.
+        samples.append({"source": source, "series": mac, "metric": "battery_pct",
+                        "value": r.get("battery"), "label": label})
+        samples.append({"source": source, "series": mac, "metric": "rssi_dbm",
+                        "value": r.get("rssi"), "label": label})
 
     # Herpstat RAWSTATUS does not carry a unit. Each configured thermostat has
     # an explicit source unit; it is deliberately independent of Bask's display
@@ -482,6 +490,12 @@ def _collect_climate(cfg: dict) -> tuple[list[dict], list[dict]]:
                             "value": _to_c(o.get("setpoint"), source_unit), "label": label})
             samples.append({"source": "herpstat", "series": key, "metric": "output_pct",
                             "value": o.get("output_pct"), "label": label})
+            # An output going into alarm or error is a discrete moment, and the
+            # thing you want when a trend bends is the timestamp it started.
+            events.append({"source": "herpstat", "series": key, "key": "alarm",
+                           "value": "yes" if o.get("alarm") else "no"})
+            events.append({"source": "herpstat", "series": key, "key": "error",
+                           "value": o.get("error") or "none"})
 
     # The mini-split. Its own thermometer is the one the unit acts on, so it is
     # logged as a first-class series rather than trusted as "the room" — the
@@ -504,6 +518,33 @@ def _collect_climate(cfg: dict) -> tuple[list[dict], list[dict]]:
         for field in ("mode", "power", "fan"):
             events.append({"source": "cielo", "series": key, "key": field,
                            "value": c.get(field)})
+
+    # The humidifier is an actuator, not decoration: it moves the same room the
+    # mini-split does, and it was invisible to this log while sitting switched
+    # off and out of water. mist_level is its output percentage by another
+    # name, and target_humidity is its setpoint — the humidity equivalents of
+    # what is already recorded for the thermostats.
+    h = humidifier.public_status()
+    if h.get("configured") and not h.get("stale") and h.get("online"):
+        hkey = "humidifier"
+        hlabel = h.get("name") or "Humidifier"
+        for metric, value in (("humidity", h.get("humidity")),
+                              ("target_humidity", h.get("target_humidity")),
+                              ("mist_level", h.get("mist_level"))):
+            samples.append({"source": "humidifier", "series": hkey,
+                            "metric": metric, "value": value, "label": hlabel})
+        for field in ("power", "mode", "water_lacks"):
+            events.append({"source": "humidifier", "series": hkey, "key": field,
+                           "value": h.get(field)})
+
+    # Which range set was in force. Derived from the clock today, but the
+    # schedule is editable: without recording it, changing day_start_hour next
+    # month silently rewrites whether last month's nights were ever in range.
+    settings = cfg.get("settings", {})
+    events.append({"source": "schedule", "series": "room", "key": "phase",
+                   "value": "day" if is_daytime(settings) else "night"})
+    events.append({"source": "schedule", "series": "room", "key": "day_hours",
+                   "value": f"{settings.get('day_start_hour')}-{settings.get('day_end_hour')}"})
 
     return samples, events
 

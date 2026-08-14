@@ -458,6 +458,57 @@ def test_a_second_controller_cannot_take_the_first_ones_history(db) -> None:
     print("  ✓ a second controller starts its own line and steals nothing")
 
 
+def test_every_actuator_and_its_diagnostics_are_captured(db) -> None:
+    """The log must cover what *moves* the room, not just what measures it.
+
+    A climate record that omits an actuator cannot explain the room: the
+    humidifier sat switched off and out of water for an unknown period while
+    nothing recorded either fact. Battery and signal are here for the same
+    reason — when a series stops, "did it die or move out of range" has to be
+    answerable from the data rather than from memory.
+    """
+    import server.app as app
+
+    now = int(time.time())
+    cfg = {
+        "sensors": [{"mac": "CC:00:01", "name": "Probe"}],
+        "enclosures": [],
+        "settings": {"temp_unit": "F", "stale_after_minutes": 10,
+                     "day_start_hour": 8, "day_end_hour": 20},
+    }
+    with db.get_conn() as conn:
+        conn.execute("INSERT OR REPLACE INTO readings VALUES (?,?,?,?,?,?)",
+                     ("CC:00:01", 22.0, 55.0, 87, -71, now))
+
+    app._thermostats.clear()
+    class Off:
+        def public_status(self): return {"configured": False}
+    class Humid:
+        def public_status(self):
+            return {"configured": True, "stale": False, "online": True,
+                    "name": "Classic 300S", "humidity": 37,
+                    "target_humidity": 50, "mist_level": 2,
+                    "power": False, "mode": "auto", "water_lacks": True}
+    oc, oh = app.cielo, app.humidifier
+    app.cielo, app.humidifier = Off(), Humid()
+    try:
+        samples, events = app._collect_climate(cfg)
+    finally:
+        app.cielo, app.humidifier = oc, oh
+
+    got = {(s["source"], s["metric"]): s["value"] for s in samples}
+    assert got[("sensor", "battery_pct")] == 87, got
+    assert got[("sensor", "rssi_dbm")] == -71, got
+    assert got[("humidifier", "mist_level")] == 2, got
+    assert got[("humidifier", "target_humidity")] == 50, got
+
+    keyed = {(e["source"], e["key"]): e["value"] for e in events}
+    assert keyed[("humidifier", "water_lacks")] is True, keyed
+    assert keyed[("schedule", "phase")] in ("day", "night"), keyed
+    assert keyed[("schedule", "day_hours")] == "8-20", keyed
+    print("  ✓ actuators, battery, signal and the active schedule are all logged")
+
+
 def test_renaming_a_sensor_keeps_its_outdoor_role() -> None:
     """The frontend's rename posts {name, species} and nothing else.
 
@@ -549,6 +600,7 @@ def main() -> None:
         test_auto_resolution_picks_hourly_for_long_windows,
         test_outdoor_sensor_is_filed_apart_from_the_room,
         test_a_dropped_out_sensor_leaves_a_gap_not_a_flat_line,
+        test_every_actuator_and_its_diagnostics_are_captured,
         test_pseudonymous_cielo_key_adopts_its_own_history,
         test_startup_repairs_an_already_split_mini_split,
         test_a_second_controller_cannot_take_the_first_ones_history,
