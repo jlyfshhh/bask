@@ -183,7 +183,6 @@ CLIMATE_ROLLUP_LATE_HOURS = 2
 def init_climate(conn: sqlite3.Connection) -> None:
     for statement in CLIMATE_SCHEMA:
         conn.execute(statement)
-    merge_legacy_cielo(conn)
 
 
 # ── Writer side (scanner) ────────────────────────────────────────────────────
@@ -312,15 +311,18 @@ LEGACY_CIELO_SERIES = "cielo"
 def merge_legacy_cielo(conn: sqlite3.Connection) -> int:
     """Sweep any mini-split history still filed under the old constant key.
 
-    Called at startup as well as at series creation, because those are two
-    different situations and only one of them is covered by creation:
+    Covers the case series creation cannot: a database where both keys already
+    exist because the upgrade ran and wrote a tick before this repair existed.
+    Nothing is ever created again for that key, so creation-time adoption would
+    never fire and the split would be permanent.
 
-      * upgrading with no new key yet — the merge happens when the first
-        pseudonymous series is interned;
-      * a database where both keys already exist because the upgrade ran and
-        wrote a tick before this repair existed. Nothing is ever created again
-        for that key, so creation-time adoption would never fire and the split
-        would be permanent.
+    Deliberately NOT called from init_climate. A first attempt ran it there and
+    took the whole application down — the rewrite raised a disk I/O error, the
+    exception escaped startup, and the container crash-looped with no dashboard
+    and no logging while the migration retried and failed on every boot. A data
+    repair is never worth more than the service it runs inside, so this is
+    driven from the maintenance loop, where a failure is already caught, logged,
+    and retried on the next pass with the app still serving.
 
     Idempotent, and a no-op once there is no legacy series left.
     """

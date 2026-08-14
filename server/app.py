@@ -520,6 +520,28 @@ def _tick_stamp(now: float) -> int:
     return int(round(now / CLIMATE_INTERVAL) * CLIMATE_INTERVAL)
 
 
+_cielo_merge_done = False
+
+
+def _merge_legacy_cielo_once() -> int:
+    """Attempt the legacy mini-split merge, and stop trying once it is settled.
+
+    Returns the number of series merged. Marked done when there is nothing left
+    to do, so a database that never had the old key costs one query on the
+    first maintenance pass and nothing afterwards.
+    """
+    global _cielo_merge_done
+    with db.get_conn() as conn:
+        merged = db.merge_legacy_cielo(conn)
+        remaining = conn.execute(
+            "SELECT COUNT(*) FROM climate_series WHERE source='cielo' AND series=?",
+            (db.LEGACY_CIELO_SERIES,),
+        ).fetchone()[0]
+    if not remaining:
+        _cielo_merge_done = True
+    return merged
+
+
 async def _climate_loop():
     # Not zero: that would make the first tick after every restart also run a
     # rollup, delaying the sample that restart was meant to start producing.
@@ -547,6 +569,17 @@ async def _climate_loop():
                     log.info(f"climate rollup complete, pruned {pruned} raw samples")
         except Exception as e:
             log.warning(f"climate rollup failed: {e}")
+        # One-off data repairs live here rather than at startup. A failing
+        # migration must cost a log line and a retry, never the dashboard: run
+        # from init_db this same call crash-looped the container, taking
+        # monitoring down to fix a chart.
+        try:
+            if not _cielo_merge_done:
+                merged = await asyncio.to_thread(_merge_legacy_cielo_once)
+                if merged:
+                    log.info(f"merged {merged} legacy mini-split series")
+        except Exception as e:
+            log.warning(f"legacy mini-split merge deferred: {e}")
 
 
 @asynccontextmanager
