@@ -29,6 +29,15 @@ def get_conn() -> sqlite3.Connection:
     # WAL keeps the reader (web server) from blocking the writer (scanner).
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
+    # The web container has no writable temp directory: its /tmp tmpfs is
+    # mode 0700 owned by root while the process runs as an unprivileged uid, so
+    # Python reports "No usable temporary directory found" and SQLite reports
+    # the same thing as a bare "disk I/O error". Any statement needing a sorter
+    # or a transient b-tree fails, which is a trap that waits for whichever
+    # query first happens to need one — here, a migration that rewrote a
+    # primary key. Keeping temporary structures in memory removes the
+    # dependency entirely; the working sets are small and the Pi has RAM.
+    conn.execute("PRAGMA temp_store=MEMORY")
     return conn
 
 
