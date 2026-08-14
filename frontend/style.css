@@ -4,22 +4,48 @@
    sized for fingers (>=48px hit areas), readable across a room,
    and color-coded so problems pop without reading numbers.
    ============================================================ */
-:root {
-  --bg:        #0d0f15;
-  --surface:   #161a24;
-  --surface2:  #1f2433;
-  --border:    #2b3142;
-  --text:      #eef1f7;
-  --muted:     #8b93a7;
+/* Palette carried across from Shed's dark theme so the two read as one
+   product rather than two tools that happen to share a house.
+   Values match husbandry-app/app/globals.css [data-theme="dark"] exactly; when
+   one moves the other has an obvious counterpart to move with it.
 
-  --ok:        #2fbf5b;   --ok-bg:      #0f2a18;  --ok-border:      #1c6b35;
-  --warning:   #f2a516;   --warning-bg: #2e2206;  --warning-border: #8a6310;
-  --danger:    #f0463f;   --danger-bg:  #2c0c0b;  --danger-border:  #93211c;
-  --stale:     #717a90;   --stale-bg:   #161a24;  --stale-border:   #353c4f;
-  --accent:    #3b82f6;   --accent-hover:#2f6fe0;
+   Two deliberate departures from what Bask used to be:
+
+   Neutrals are warm, not blue. Bask's greys carried a blue bias (#0d0f15,
+   #2b3142) which is what made it read as a monitoring console next to Shed's
+   warmth. Shed's dark neutrals are near-neutral with a faint warm lean.
+
+   Status colours are desaturated. #2fbf5b and #f0463f are signal-flare
+   colours: correct for a screen read from a doorway, harsh in the hand. Haven
+   owns the wall now, so Bask can afford Shed's muted inks — which still carry
+   the green/amber/red distinction, just without shouting. The one thing not
+   traded away is separation: ok, check and alert must stay distinguishable at
+   a glance, because "green or not green" is the whole point of the app. */
+:root {
+  --bg:        #14171b;   /* Shed --cream  */
+  --surface:   #1c2027;   /* Shed --paper  */
+  --surface2:  #232830;   /* Shed --surface-sunken */
+  --border:    #2c323a;   /* Shed --line   */
+  --text:      #eef1f4;   /* Shed --ink    */
+  --muted:     #9aa3ad;   /* Shed --muted  */
+
+  --ok:        #7fd39b;   --ok-bg:      #1c2d22;  --ok-border:      #2f5a3f;
+  --warning:   #f2a516;   --warning-bg: #2a2016;  --warning-border: #6b4d21;
+  --danger:    #f0a08c;   --danger-bg:  #2d1c18;  --danger-border:  #6b3a2e;
+  --stale:     #9aa3ad;   --stale-bg:   #1c2027;  --stale-border:   #2c323a;
+  --accent:    #f08a3c;   --accent-hover:#e0701a;   /* Shed --moss */
+  /* Shed's warm chip family: a wash to sit on, a line to edge it, and an ink
+     that stays legible on both. Used for labelled facts — room climate, the
+     outdoor reading — which must not compete with the status colours. */
+  --accent-wash: #262019;
+  --accent-chip: #3a2a14;
+  --accent-line: #6b4d21;
+  --accent-ink:  #f5b877;
+
+  --shadow:    0 16px 42px rgba(0, 0, 0, .45);
 
   --tap: 52px;            /* minimum comfortable touch target */
-  --radius: 16px;
+  --radius: 18px;         /* Shed's card radius */
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
@@ -85,13 +111,16 @@ body {
   appearance: none; color: var(--text); cursor: pointer; text-align: left;
   grid-template-columns: auto auto; grid-template-rows: auto auto;
   align-items: center; column-gap: 10px;
-  padding: 7px 12px; min-width: 138px; max-width: 190px;
-  background: rgba(59,130,246,0.11); border: 1px solid #2f4d80; border-radius: 12px;
+  padding: 8px 13px; min-width: 138px; max-width: 190px;
+  /* Shed's warm chip rather than the old blue wash: this is a labelled fact,
+     not an alert, and it should not compete with the status colours. */
+  background: var(--accent-wash); border: 1px solid var(--accent-line);
+  border-radius: 14px;
   flex-shrink: 0;
 }
-.room-climate:active { background: rgba(59,130,246,0.2); }
+.room-climate:active { background: var(--accent-chip); }
 .room-climate.unavailable { opacity: 0.65; border-color: var(--stale-border); }
-.rc-label { grid-column: 1 / -1; color: #8fb9ff; font-size: 0.68rem; font-weight: 800;
+.rc-label { grid-column: 1 / -1; color: var(--accent-ink); font-size: 0.68rem; font-weight: 800;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rc-reading { font-size: 1.15rem; line-height: 1.1; font-weight: 850; white-space: nowrap;
   font-variant-numeric: tabular-nums; }
@@ -106,8 +135,11 @@ body {
   border: 1px solid var(--border);
 }
 .period-badge .pi-ico { font-size: 1.2rem; line-height: 1; }
-.period-badge.day   { background: rgba(242,165,22,0.14); color: var(--warning); border-color: var(--warning-border); }
-.period-badge.night { background: rgba(59,130,246,0.16); color: #7fb0ff; border-color: #2f4d80; }
+.period-badge.day   { background: var(--warning-bg); color: var(--warning); border-color: var(--warning-border); }
+/* Night keeps a cool cast — it is the one place where blue carries meaning
+   rather than decoration — but pulled down to sit inside the warm palette
+   instead of the old signal blue. */
+.period-badge.night { background: #1b2029; color: #9fb4cc; border-color: #38404c; }
 
 /* ── Herpstat thermostat strip ── */
 .tstat-strip {
@@ -154,8 +186,8 @@ body {
   background: var(--border); overflow: hidden; margin-top: 3px; }
 .ts-fill { display: block; height: 100%; background: var(--muted); border-radius: 999px; }
 .tstat.heating { border-color: #7a4a12; background: rgba(242,165,22,0.08); }
-.tstat.heating .ts-temp { color: var(--warn, #f2a516); }
-.tstat.heating .ts-fill { background: var(--warn, #f2a516); }
+.tstat.heating .ts-temp { color: var(--warning); }
+.tstat.heating .ts-fill { background: var(--warning); }
 .tstat.idle .ts-temp { color: var(--ok); }
 .tstat.alarm { border-color: var(--danger); background: var(--danger-bg); }
 .tstat.alarm .ts-temp { color: var(--danger); }
@@ -164,10 +196,13 @@ body {
 
 /* Outdoor reference chip — same shell as the room climate, cooler palette so
    it never reads as another thing to keep in range. */
+/* Outdoor keeps a cool cast for the same reason night does — it means
+   "outside", not "attention" — but sits inside the warm palette's range
+   rather than reaching for a signal blue. */
 .room-climate.outdoor {
-  background: rgba(125,211,252,0.10); border-color: #2b5068; cursor: default;
+  background: #1b2029; border-color: #38404c; cursor: default;
 }
-.room-climate.outdoor .rc-label { color: #8fd3ff; }
+.room-climate.outdoor .rc-label { color: #9fb4cc; }
 
 /* status dot + test result used in the Manage → Thermostats pane */
 .tdot { display: inline-block; width: 9px; height: 9px; border-radius: 50%;
@@ -255,8 +290,12 @@ body {
 
 .enc-card {
   border-radius: var(--radius);
-  border: 2px solid var(--border);
+  /* 1px, not 2px. A two-pixel border is a wall-display device — it carries the
+     status colour far enough to read from a doorway. In the hand it reads as
+     heavy, and Shed gets the same separation from a hairline plus elevation. */
+  border: 1px solid var(--border);
   background: var(--surface);
+  box-shadow: var(--shadow);
   /* The grid squeezes cards to fit without scrolling. Past this point a
      card is unreadable, so let the grid scroll instead of clipping. */
   min-height: 150px;
