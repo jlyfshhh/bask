@@ -27,7 +27,7 @@ def main() -> None:
         db.init_db()
 
         from fastapi.testclient import TestClient
-        from server.app import app
+        from server.app import app, keeper_unlock_throttle
         from server import keeper
 
         client = TestClient(app)
@@ -87,10 +87,26 @@ def main() -> None:
             assert r.status_code == 401, f"{method.upper()} {path} returned {r.status_code}, expected 401"
         print(f"  {len(refused)} setup routes refused without the key")
 
-        # ── The two reads that leak the ntfy topic are refused too ───────────
-        for path in ("/api/ntfy", "/api/ntfy/qr", "/api/config/export"):
+        # ── Private alert/configuration reads are refused too ────────────────
+        for path in ("/api/ntfy", "/api/ntfy/delivery", "/api/ntfy/qr",
+                     "/api/config/export"):
             assert anon.get(path).status_code == 401, f"{path} leaks setup detail; must be gated"
         print("  ntfy topic and config export are gated")
+
+        # ── Unlock hashing cannot be driven without limit ───────────────────
+        keeper_unlock_throttle.reset()
+        attacker = TestClient(app)
+        for _ in range(4):
+            assert attacker.post(
+                "/api/keeper/unlock", json={"key": "same-wrong-key"}).status_code == 401
+        limited = attacker.post("/api/keeper/unlock", json={"key": "same-wrong-key"})
+        assert limited.status_code == 429
+        assert int(limited.headers["retry-after"]) > 0
+        # A different candidate remains usable, so a repeated typo does not
+        # lock the Head Keeper out of their own dashboard.
+        assert attacker.post("/api/keeper/unlock", json={"key": key}).status_code == 200
+        keeper_unlock_throttle.reset()
+        print("  repeated unlock guesses are throttled without blocking the real key")
 
         # ── Unlocking ────────────────────────────────────────────────────────
         assert anon.post("/api/keeper/unlock", json={"key": "wrong-key-entirely"}).status_code == 401
@@ -198,6 +214,9 @@ def main() -> None:
         status = blocked.get("/api/keeper").json()
         assert status["configured"] is True and status["unlocked"] is False
         assert "config.json" in status.get("problem", ""), "the error should say how to recover"
+        assert blocked.post(
+            "/api/keeper/unlock", json={"key": "anything"}).status_code == 503, \
+            "a corrupt record must not be presented as an open install by the unlock endpoint"
         assert blocked.get("/api/dashboard").status_code == 200, "reads stay open"
         print("  a corrupt keeper record refuses writes instead of opening them")
 

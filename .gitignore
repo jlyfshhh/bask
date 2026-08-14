@@ -7,6 +7,7 @@ __pycache__/
 readings.db
 readings.db-shm
 readings.db-wal
+alert-state.json
 data/
 backups/
 .env

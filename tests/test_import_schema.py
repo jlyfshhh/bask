@@ -127,6 +127,26 @@ def test_thermostat_addresses_must_be_on_the_home_network():
     assert out["thermostats"][0]["ip"] == "192.168.1.50"
 
 
+def test_thermostat_source_unit_is_validated_and_portable():
+    out = _validate_import({
+        **BASE,
+        "settings": {"temp_unit": "C"},
+        "thermostats": [{"ip": "192.168.1.50", "name": "Herpstat", "temp_unit": "F"}],
+    })
+    assert out["thermostats"][0]["temp_unit"] == "F"
+    expect_rejected({
+        **BASE,
+        "thermostats": [{"ip": "192.168.1.50", "temp_unit": "Kelvin"}],
+    }, "invalid Herpstat source unit")
+
+    restored = _validate_import(_portable_export({
+        **BASE,
+        "settings": {"temp_unit": "C"},
+        "thermostats": [{"ip": "192.168.1.50", "temp_unit": "F", "enabled": True}],
+    }))
+    assert restored["thermostats"][0]["temp_unit"] == "F"
+
+
 def test_the_notification_server_must_be_https():
     for bad in ("http://ntfy.sh", "ftp://x", "ntfy.sh", "https://user:pw@ntfy.sh"):
         expect_rejected({**BASE, "ntfy": {"server": bad, "enabled": True}}, f"ntfy server={bad}")

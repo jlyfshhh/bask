@@ -16,6 +16,54 @@ function ageLabel(timestamp, nowSeconds = Math.floor(Date.now() / 1000)) {
   return `${hours} hour${hours === 1 ? "" : "s"} ago`;
 }
 
+function careSummaryState(summary = {}) {
+  const total = number(summary.total);
+  const completed = number(summary.completed);
+  const refused = number(summary.refused);
+  const skipped = number(summary.skipped);
+  const missed = number(summary.missed);
+  const remaining = number(summary.remaining);
+  const overdue = number(summary.overdue);
+  const percent = total ? Math.round((completed / total) * 100) : null;
+  const isSettled = remaining === 0;
+  const isComplete = total > 0 && completed === total && skipped === 0 && missed === 0;
+
+  let headline;
+  if (remaining > 0) {
+    headline = `${remaining} care task${remaining === 1 ? "" : "s"} remaining`;
+  } else if (total === 0) {
+    headline = "No care scheduled today";
+  } else if (isComplete) {
+    headline = `Today's care is complete${refused ? ` · ${refused} refusal${refused === 1 ? "" : "s"} recorded` : ""}`;
+  } else {
+    const dispositions = [
+      missed ? `${missed} missed` : "",
+      skipped ? `${skipped} skipped` : "",
+    ].filter(Boolean).join(" · ");
+    headline = `Today's list is settled${dispositions ? ` · ${dispositions}` : ""}`;
+  }
+  if (overdue) headline += ` · ${overdue} overdue`;
+
+  let emptyMessage;
+  if (total === 0) {
+    emptyMessage = "No care is scheduled for today.";
+  } else if (isComplete) {
+    emptyMessage = "Everything scheduled for today is complete.";
+  } else {
+    const parts = [
+      completed ? `${completed} complete` : "",
+      missed ? `${missed} missed` : "",
+      skipped ? `${skipped} skipped` : "",
+    ].filter(Boolean).join(" · ");
+    emptyMessage = `Today's list is settled${parts ? ` — ${parts}` : ""}. Nothing remains actionable.`;
+  }
+
+  return {
+    total, completed, refused, skipped, missed, remaining, overdue,
+    percent, isSettled, isComplete, headline, emptyMessage,
+  };
+}
+
 /**
  * One source-of-truth for the banner, headline, ticker, and task panel.
  * A cached Shed payload is useful diagnostic state, but it is not live data.
@@ -50,9 +98,8 @@ function dashboardState(data, nowSeconds = Math.floor(Date.now() / 1000)) {
 
   let carePart;
   if (shedStatus === "live") {
-    const remaining = Number(shed.data?.summary?.remaining);
-    carePart = Number.isFinite(remaining)
-      ? `${remaining} care task${remaining === 1 ? "" : "s"} remaining`
+    carePart = shed.data?.summary
+      ? careSummaryState(shed.data.summary).headline
       : "Shed is syncing";
   } else if (shedStatus === "stale") {
     carePart = `Shed unavailable · last synced ${ageLabel(shed.last_success, nowSeconds)}`;
@@ -132,6 +179,7 @@ function renderShed(shed) {
   const reset = (message) => {
     panel?.classList.add("degraded");
     $("#task-ring strong").textContent = "—";
+    $("#task-ring span").textContent = "done";
     $("#task-progress").style.width = "0%";
     $("#task-metrics").innerHTML = "";
     $("#task-list").innerHTML = `<div class="empty degraded-message">${message}</div>`;
@@ -149,12 +197,17 @@ function renderShed(shed) {
   panel?.classList.remove("degraded");
 
   const data = shed.data;
-  const summary = data.summary;
-  const percent = summary.total ? Math.round((summary.completed / summary.total) * 100) : 100;
-  $("#task-ring strong").textContent = `${percent}%`;
-  $("#task-progress").style.width = `${percent}%`;
+  const summary = careSummaryState(data.summary);
+  $("#task-ring strong").textContent = summary.percent == null ? "—" : `${summary.percent}%`;
+  $("#task-ring span").textContent = summary.percent == null ? "scheduled" : "done";
+  $("#task-progress").style.width = `${summary.percent ?? 0}%`;
+  const refusedLabel = summary.refused
+    ? `Complete · ${summary.refused} refused`
+    : "Complete";
   $("#task-metrics").innerHTML = `
-    <div class="task-metric"><strong>${summary.completed}</strong><span>Complete</span></div>
+    <div class="task-metric"><strong>${summary.completed}</strong><span>${refusedLabel}</span></div>
+    <div class="task-metric missed"><strong>${summary.missed}</strong><span>Missed</span></div>
+    <div class="task-metric"><strong>${summary.skipped}</strong><span>Skipped</span></div>
     <div class="task-metric"><strong>${summary.remaining}</strong><span>Remaining</span></div>
     <div class="task-metric overdue"><strong>${summary.overdue}</strong><span>Overdue</span></div>`;
 
@@ -184,7 +237,7 @@ function renderShed(shed) {
         </article>`;
       }).join("") + (combined.length > visible.length
         ? `<div class="more-tasks">+ ${combined.length - visible.length} more in Shed</div>` : "")
-    : `<div class="empty">Everything scheduled for today is complete.</div>`;
+    : `<div class="empty">${escapeHtml(summary.emptyMessage)}</div>`;
 }
 
 function listNames(names) {
@@ -243,16 +296,27 @@ function buildMessages(data) {
   const state = dashboardState(data);
   const shed = state.shedStatus === "live" ? data.shed?.data : null;
   if (shed) {
-    const { remaining, overdue, completed, total } = shed.summary;
+    const care = careSummaryState(shed.summary);
+    const { remaining, overdue, completed, total, refused, skipped, missed } = care;
     const tasks = shed.tasks || [];
     const overdueTasks = shed.overdue || [];
 
     if (!remaining && !overdue) {
-      messages.push(rotate([
-        `Every bit of today's care is done — nicely handled. 🎉`,
-        `Today's list is all checked off. The critters are set.`,
-        `Care's all caught up. Everybody's been looked after today.`,
-      ]));
+      if (total === 0) {
+        messages.push(`Nothing is scheduled in Shed today.`);
+      } else if (care.isComplete) {
+        messages.push(rotate([
+          `Every bit of today's care is done — nicely handled. 🎉`,
+          `Today's list is all checked off. The critters are set.`,
+          `Care's all caught up. Everybody's been looked after today.`,
+        ]));
+      } else {
+        const dispositions = [
+          missed ? `${missed} missed` : "",
+          skipped ? `${skipped} skipped` : "",
+        ].filter(Boolean).join(" and ");
+        messages.push(`Today's list is settled with ${dispositions}; no care tasks remain actionable.`);
+      }
     } else {
       if (remaining) {
         const next = tasks[0];
@@ -267,7 +331,16 @@ function buildMessages(data) {
           : `${overdue} ${overdue === 1 ? "task is" : "tasks are"} carried over from earlier.`);
       }
     }
-    if (total && completed) messages.push(`${completed} of ${total} knocked out so far today.`);
+    if (total && completed) {
+      messages.push(`${completed} of ${total} scheduled care tasks completed${refused ? `, including ${refused} refused feeding${refused === 1 ? "" : "s"}` : ""}.`);
+    }
+    if ((remaining || overdue) && (missed || skipped)) {
+      const dispositions = [
+        missed ? `${missed} missed` : "",
+        skipped ? `${skipped} skipped` : "",
+      ].filter(Boolean).join(" · ");
+      messages.push(`${dispositions} on today's list; those are settled and are not shown as work still due.`);
+    }
 
     const hungry = listNames(tasks
       .filter((task) => /feed|salad|insect|cgd|smoothie|rat|mouse|dubia|worm/i.test(`${task.taskType} ${task.title}`))
@@ -353,5 +426,5 @@ if (typeof document !== "undefined") {
 }
 
 if (typeof module !== "undefined") {
-  module.exports = { ageLabel, dashboardState, buildMessages };
+  module.exports = { ageLabel, careSummaryState, dashboardState, buildMessages };
 }

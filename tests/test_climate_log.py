@@ -123,6 +123,102 @@ def test_rollup_excludes_the_hour_in_progress(db) -> None:
     print("  ✓ only completed hours are rolled up")
 
 
+def test_rollup_is_incremental_but_accepts_recent_late_samples(db) -> None:
+    """Steady-state maintenance must not rewrite the full raw-retention window.
+
+    Rebuilding a bounded recent window is intentional: it lets a delayed sample
+    correct the aggregate for a just-completed hour. An update trigger makes the
+    amount of work observable, so this fails if the old 14-day rescan returns.
+    """
+    first_hour = 1786615200 - (1786615200 % 3600)
+    series = "ROLLUP:INCREMENTAL"
+    for h in range(12):
+        db.write_climate_tick(first_hour + h * 3600 + 60, [
+            {"source": "sensor", "series": series, "metric": "temp_c",
+             "value": 20.0 + h, "label": "Rollup Probe"}], [])
+
+    current_hour = first_hour + 12 * 3600
+    db.roll_up_climate(now=current_hour + 10)
+    with db.get_conn() as conn:
+        sid = conn.execute(
+            "SELECT id FROM climate_series WHERE series=?", (series,)
+        ).fetchone()[0]
+        conn.execute("CREATE TABLE rollup_updates (hour INTEGER)")
+        conn.execute(f"""
+            CREATE TRIGGER count_rollup_updates
+            AFTER UPDATE ON climate_hourly
+            WHEN NEW.series_id = {int(sid)}
+            BEGIN
+                INSERT INTO rollup_updates VALUES (NEW.hour);
+            END
+        """)
+
+    # This sample arrived after its hour had already been rolled up, but is
+    # inside the two-hour correction window.
+    late_hour = current_hour - 3600
+    db.write_climate_tick(late_hour + 120, [
+        {"source": "sensor", "series": series, "metric": "temp_c",
+         "value": 42.0, "label": "Rollup Probe"}], [])
+    # The real maintenance loop runs hourly, so advance to the next boundary.
+    # The new, not-yet-seen hour is included as backlog while only the two
+    # previously aggregated hours are rewritten.
+    db.roll_up_climate(now=current_hour + 3600 + 20)
+
+    with db.get_conn() as conn:
+        touched = [r[0] for r in conn.execute(
+            "SELECT hour FROM rollup_updates ORDER BY hour")]
+        conn.execute("DROP TRIGGER count_rollup_updates")
+        conn.execute("DROP TABLE rollup_updates")
+
+    expected = [current_hour - 2 * 3600, current_hour - 3600]
+    assert touched == expected, \
+        f"steady-state rollup should touch {expected}, touched {touched}"
+
+    got = db.get_climate(late_hour, late_hour + 3599, "hourly")
+    point = next(s for s in got["series"] if s["series"] == series)["points"][0]
+    original = 20.0 + 11
+    assert point["min"] == original, point
+    assert point["max"] == 42.0, point
+    assert abs(point["avg"] - ((original + 42.0) / 2)) < 0.001, point
+    print("  ✓ rollup is incremental and incorporates bounded late arrivals")
+
+
+def test_too_late_sample_cannot_replace_a_durable_hour(db) -> None:
+    """Once raw retention has passed, a lone delayed sample is not a full hour.
+
+    The prune-safety pass may discover it, but must not overwrite the complete
+    aggregate that survived after the original raw rows were discarded.
+    """
+    now = int(time.time())
+    old_hour = now - (db.RAW_RETENTION_DAYS + 2) * 86400
+    old_hour -= old_hour % 3600
+    series = "ROLLUP:TOO-LATE"
+    db.write_climate_tick(old_hour + 60, [
+        {"source": "sensor", "series": series, "metric": "temp_c",
+         "value": 99.0, "label": "Too-late Probe"}], [])
+
+    with db.get_conn() as conn:
+        sid = conn.execute(
+            "SELECT id FROM climate_series WHERE series=?", (series,)
+        ).fetchone()[0]
+        conn.execute(
+            "INSERT INTO climate_hourly VALUES (?, ?, ?, ?, ?, ?)",
+            (old_hour, sid, 18.0, 20.0, 23.0, 60),
+        )
+
+    db.roll_up_climate(now=now)
+    got = db.get_climate(old_hour, old_hour + 3599, "hourly")
+    point = next(s for s in got["series"] if s["series"] == series)["points"][0]
+    assert point == {"at": old_hour, "avg": 20.0, "min": 18.0, "max": 23.0}, point
+    with db.get_conn() as conn:
+        raw = conn.execute(
+            "SELECT COUNT(*) FROM climate_samples WHERE recorded_at=?",
+            (old_hour + 60,),
+        ).fetchone()[0]
+    assert raw == 0, "out-of-retention raw row was not pruned"
+    print("  ✓ too-late sample cannot replace a durable hourly aggregate")
+
+
 def test_prune_drops_raw_but_never_rollups(db) -> None:
     """Raw is bounded so the SD card survives; the rollup is the long memory and
     must outlive it."""
@@ -291,6 +387,28 @@ def test_units_are_normalised_to_celsius() -> None:
     print("  ✓ every temperature normalised to Celsius on the way in")
 
 
+def test_history_query_bounds() -> None:
+    """An open LAN read must not create an unbounded SQLite/JSON workload."""
+    from fastapi import HTTPException
+    from server.app import _climate_filter, climate_history
+
+    assert _climate_filter(" sensor,herpstat,sensor ", "source") == ["sensor", "herpstat"]
+    for value in (",".join(f"source-{i}" for i in range(33)), "x" * 65, "x" * 2049):
+        try:
+            _climate_filter(value, "source")
+        except HTTPException as error:
+            assert error.status_code == 400
+        else:
+            raise AssertionError("oversized climate filter was accepted")
+    try:
+        climate_history(hours=49, resolution="raw")
+    except HTTPException as error:
+        assert error.status_code == 400 and "48 hours" in str(error.detail)
+    else:
+        raise AssertionError("oversized raw-history response was accepted")
+    print("  ✓ history query work is bounded before SQLite and JSON rendering")
+
+
 def main() -> None:
     checks = [
         test_aligned_tick_joins_sources,
@@ -299,6 +417,8 @@ def main() -> None:
         test_events_written_only_on_change,
         test_rollup_preserves_the_dip,
         test_rollup_excludes_the_hour_in_progress,
+        test_rollup_is_incremental_but_accepts_recent_late_samples,
+        test_too_late_sample_cannot_replace_a_durable_hour,
         test_prune_drops_raw_but_never_rollups,
         test_auto_resolution_picks_hourly_for_long_windows,
         test_outdoor_sensor_is_filed_apart_from_the_room,
@@ -315,7 +435,8 @@ def main() -> None:
         test_early_wake_does_not_swallow_a_tick()
         test_renaming_a_sensor_keeps_its_outdoor_role()
         test_units_are_normalised_to_celsius()
-    print(f"Climate log: {len(checks) + 3} checks passed.")
+        test_history_query_bounds()
+    print(f"Climate log: {len(checks) + 4} checks passed.")
 
 
 if __name__ == "__main__":

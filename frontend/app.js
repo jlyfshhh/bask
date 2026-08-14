@@ -148,6 +148,128 @@ const STATUS_LABEL = {
   stale: "Stale", no_data: "No data", no_ranges: "No range",
 };
 
+// ── dialog accessibility ───────────────────────────
+// Bask's overlays are deliberately plain DOM rather than a framework widget.
+// Keep their modal semantics in one place: only the top dialog is interactive,
+// focus cannot escape it with Tab, Escape closes it, and closing restores the
+// control that opened it. `inert` also prevents pointer/AT interaction with the
+// dashboard behind the visible sheet.
+const _dialogStack = [];
+const _dialogOpeners = new WeakMap();
+const _dialogBackground = new Map();
+
+function dialogFocusable(dialog) {
+  return [...dialog.querySelectorAll(
+    'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),' +
+    'textarea:not([disabled]),[tabindex]:not([tabindex="-1"])'
+  )].filter(node => !node.closest("[inert]") &&
+    node.getAttribute("aria-hidden") !== "true" && node.getClientRects().length > 0);
+}
+
+function restoreDialogBackground() {
+  for (const [node, previous] of _dialogBackground) {
+    node.inert = previous.inert;
+    if (previous.ariaHidden == null) node.removeAttribute("aria-hidden");
+    else node.setAttribute("aria-hidden", previous.ariaHidden);
+  }
+  _dialogBackground.clear();
+}
+
+function syncDialogBackground() {
+  restoreDialogBackground();
+  const top = _dialogStack.at(-1);
+  if (!top) return;
+  // A static, closed overlay may have been part of the previous dialog's
+  // saved background. Restore happens first, so explicitly re-open the new top
+  // after that restoration rather than leaving a nested editor inert.
+  top.inert = false;
+  top.setAttribute("aria-hidden", "false");
+  for (const node of document.body.children) {
+    if (!(node instanceof HTMLElement) || node === top || node.id === "toast" ||
+        ["SCRIPT", "STYLE", "LINK"].includes(node.tagName)) continue;
+    _dialogBackground.set(node, {
+      inert: node.inert,
+      ariaHidden: node.getAttribute("aria-hidden"),
+    });
+    node.inert = true;
+    node.setAttribute("aria-hidden", "true");
+  }
+}
+
+function openDialog(id, focusSelector) {
+  const dialog = document.getElementById(id);
+  if (!dialog) return;
+  const active = document.activeElement;
+  if (active instanceof HTMLElement && active !== dialog && !_dialogStack.includes(dialog)) {
+    _dialogOpeners.set(dialog, active);
+  }
+  const oldIndex = _dialogStack.indexOf(dialog);
+  if (oldIndex >= 0) _dialogStack.splice(oldIndex, 1);
+  _dialogStack.push(dialog);
+  dialog.inert = false;
+  dialog.setAttribute("aria-hidden", "false");
+  dialog.classList.add("open");
+  syncDialogBackground();
+  const requested = focusSelector ? dialog.querySelector(focusSelector) : null;
+  const target = requested || dialogFocusable(dialog)[0] || dialog;
+  if (target instanceof HTMLElement) target.focus({ preventScroll: true });
+}
+
+function closeDialog(id) {
+  const dialog = document.getElementById(id);
+  if (!dialog) return;
+  dialog.classList.remove("open");
+  dialog.setAttribute("aria-hidden", "true");
+  dialog.inert = true;
+  const index = _dialogStack.indexOf(dialog);
+  if (index >= 0) _dialogStack.splice(index, 1);
+  syncDialogBackground();
+  const opener = _dialogOpeners.get(dialog);
+  requestAnimationFrame(() => {
+    if (opener instanceof HTMLElement && opener.isConnected && !opener.closest("[inert]")) {
+      opener.focus({ preventScroll: true });
+    } else {
+      _dialogStack.at(-1)?.focus({ preventScroll: true });
+    }
+  });
+}
+
+function dialogKeyAction(key, shiftKey, currentIndex, focusableCount) {
+  if (key === "Escape") return "close";
+  if (key !== "Tab") return "none";
+  if (focusableCount === 0) return "dialog";
+  if (shiftKey && currentIndex <= 0) return "last";
+  if (!shiftKey && (currentIndex < 0 || currentIndex === focusableCount - 1)) return "first";
+  return "none";
+}
+
+document.addEventListener("keydown", event => {
+  const top = _dialogStack.at(-1);
+  if (!top) return;
+  const focusable = dialogFocusable(top);
+  const action = dialogKeyAction(
+    event.key, event.shiftKey, focusable.indexOf(document.activeElement), focusable.length,
+  );
+  if (action === "close") {
+    event.preventDefault();
+    ({ detail: closeDetail, manage: closeManage, keeper: closeKeeper,
+       editor: closeEditor, pair: closePair })[top.id]?.();
+    return;
+  }
+  if (action === "dialog") {
+    event.preventDefault();
+    top.focus();
+    return;
+  }
+  if (action === "last") {
+    event.preventDefault();
+    focusable.at(-1).focus();
+  } else if (action === "first") {
+    event.preventDefault();
+    focusable[0].focus();
+  }
+});
+
 // ── clock ────────────────────────────────────────────────────
 function tickClock() {
   const d = new Date();
@@ -338,13 +460,13 @@ function renderGrid(data) {
 
 function metric(label, value, unit, bad, cls = "") {
   if (value == null) {
-    return `<div class="metric ${cls}"><div class="metric-label">${esc(label)}</div>
-            <div class="metric-none">—</div></div>`;
+    return `<span class="metric ${cls}"><span class="metric-label">${esc(label)}</span>
+            <span class="metric-none">—</span></span>`;
   }
-  return `<div class="metric ${cls} ${bad ? "bad" : ""}">
-    <div class="metric-label">${esc(label)}</div>
-    <div class="metric-value">${value}<span class="metric-unit">${unit}</span></div>
-  </div>`;
+  return `<span class="metric ${cls} ${bad ? "bad" : ""}">
+    <span class="metric-label">${esc(label)}</span>
+    <span class="metric-value">${value}<span class="metric-unit">${unit}</span></span>
+  </span>`;
 }
 
 function encCardHTML(e) {
@@ -354,11 +476,11 @@ function encCardHTML(e) {
   const u = "°" + _tempUnit;
 
   const body = `
-    <div class="enc-body">
+    <span class="enc-body">
       ${metric(warm?.position || "Warm", warm ? warm.temp : null, u, bad(e.warm_temp_ok))}
       ${metric("Humidity", cool ? cool.humidity : null, "%", bad(e.humidity_ok), "mid")}
       ${metric(cool?.position || "Cool", cool ? cool.temp : null, u, bad(e.cool_temp_ok))}
-    </div>`;
+    </span>`;
 
   const flags = [];
   if (e.low_battery) flags.push(`<span class="flag low-batt">🔋 low</span>`);
@@ -366,42 +488,44 @@ function encCardHTML(e) {
     flags.push(`<span class="flag stale-flag">no signal</span>`);
 
   return `
-    <div class="enc-card ${e.status}" onclick="openDetail('${idAttr(e.id)}')">
-      <div class="enc-head">
-        <div class="enc-title">
-          <div class="enc-name">${esc(e.name)}</div>
-          ${e.species_name ? `<div class="enc-species">${esc(e.species_name)}</div>` : ""}
-        </div>
-        <div class="status-badge"><span class="bdot"></span>${STATUS_LABEL[e.status] || e.status}</div>
-      </div>
+    <button type="button" class="enc-card ${e.status}" onclick="openDetail('${idAttr(e.id)}')"
+            aria-label="Open ${esc(e.name)} enclosure details">
+      <span class="enc-head">
+        <span class="enc-title">
+          <span class="enc-name">${esc(e.name)}</span>
+          ${e.species_name ? `<span class="enc-species">${esc(e.species_name)}</span>` : ""}
+        </span>
+        <span class="status-badge"><span class="bdot"></span>${STATUS_LABEL[e.status] || e.status}</span>
+      </span>
       ${body}
-      <div class="enc-foot">
+      <span class="enc-foot">
         <span>${fmtAge(e.age_seconds)}</span>
         <span class="foot-flags">${flags.join("")}</span>
-      </div>
-    </div>`;
+      </span>
+    </button>`;
 }
 
 function soloCardHTML(s) {
   const status = s.temp == null ? "no_data" : s.stale ? "stale" : "ok";
   const u = "°" + _tempUnit;
   return `
-    <div class="enc-card solo ${status}" onclick="openDetailSolo('${idAttr(s.mac)}')">
-      <div class="enc-head">
-        <div class="enc-title">
-          <div class="enc-name">${esc(s.name)}</div>
-          ${s.species ? `<div class="enc-species">${esc(s.species)}</div>` : ""}
-        </div>
-        <div class="status-badge"><span class="bdot"></span>${STATUS_LABEL[status]}</div>
-      </div>
-      <div class="enc-body">
+    <button type="button" class="enc-card solo ${status}" onclick="openDetailSolo('${idAttr(s.mac)}')"
+            aria-label="Open ${esc(s.name)} sensor details">
+      <span class="enc-head">
+        <span class="enc-title">
+          <span class="enc-name">${esc(s.name)}</span>
+          ${s.species ? `<span class="enc-species">${esc(s.species)}</span>` : ""}
+        </span>
+        <span class="status-badge"><span class="bdot"></span>${STATUS_LABEL[status]}</span>
+      </span>
+      <span class="enc-body">
         ${metric("Temp", s.temp, u, false)}
         ${metric("Humidity", s.humidity, "%", false, "mid")}
-      </div>
-      <div class="enc-foot"><span>${fmtAge(s.age_seconds)}</span>
+      </span>
+      <span class="enc-foot"><span>${fmtAge(s.age_seconds)}</span>
         <span class="foot-flags">${s.low_battery ? '<span class="flag low-batt">🔋 low</span>' : ""}</span>
-      </div>
-    </div>`;
+      </span>
+    </button>`;
 }
 
 // ── detail sheet ─────────────────────────────────────────────
@@ -436,10 +560,10 @@ function openDetail(encId) {
   document.getElementById("detail-sheet").innerHTML = `
     <div class="sheet-head">
       <div style="flex:1">
-        <h2>${esc(e.name)}</h2>
+        <h2 id="detail-title">${esc(e.name)}</h2>
         <div class="sheet-sub">${esc(e.species_name || "No species set")} · ${STATUS_LABEL[e.status]}${sp ? " · " + (isDay ? "☀️ day" : "🌙 night") + " ranges" : ""}</div>
       </div>
-      <button class="close-btn" onclick="closeDetail()">✕</button>
+      <button class="close-btn" onclick="closeDetail()" aria-label="Close details">✕</button>
     </div>
     <div class="detail-metrics">
       ${dm(e.warm?.position || "Warm", e.warm?.temp ?? null, u, bad(e.warm_temp_ok),
@@ -453,16 +577,16 @@ function openDetail(encId) {
     <div class="form-actions">
       <button class="btn" onclick="closeDetail(); openManage('enclosures'); setTimeout(()=>editEnclosure('${idAttr(e.id)}'),60)">Edit enclosure</button>
     </div>`;
-  document.getElementById("detail").classList.add("open");
+  openDialog("detail");
 }
 function openDetailSolo(mac) {
   const s = _dash?.ungrouped.find(x => x.mac === mac);
   if (!s) return;
   const u = "°" + _tempUnit;
   document.getElementById("detail-sheet").innerHTML = `
-    <div class="sheet-head"><div style="flex:1"><h2>${esc(s.name)}</h2>
+    <div class="sheet-head"><div style="flex:1"><h2 id="detail-title">${esc(s.name)}</h2>
       <div class="sheet-sub">Unassigned sensor</div></div>
-      <button class="close-btn" onclick="closeDetail()">✕</button></div>
+      <button class="close-btn" onclick="closeDetail()" aria-label="Close details">✕</button></div>
     <div class="detail-metrics">
       <div class="dm"><div class="dm-label">Temp</div><div class="dm-value">${s.temp == null ? "—" : s.temp + u}</div></div>
       <div class="dm"><div class="dm-label">Humidity</div><div class="dm-value">${s.humidity == null ? "—" : s.humidity + "%"}</div></div>
@@ -470,9 +594,9 @@ function openDetailSolo(mac) {
     </div>
     <div class="detail-rows"><div class="drow"><span>MAC</span><span>${esc(s.mac)}</span></div>
       <div class="drow"><span>Last seen</span><span>${fmtAge(s.age_seconds)}</span></div></div>`;
-  document.getElementById("detail").classList.add("open");
+  openDialog("detail");
 }
-function closeDetail() { document.getElementById("detail").classList.remove("open"); }
+function closeDetail() { closeDialog("detail"); }
 
 // ── manage overlay ───────────────────────────────────────────
 // ── Head Keeper lock ────────────────────────────────────────────────────────
@@ -498,12 +622,11 @@ function openKeeper(afterUnlock) {
   document.getElementById("keeper-error").textContent = "";
   const field = document.getElementById("keeper-key");
   field.value = "";
-  document.getElementById("keeper").classList.add("open");
-  setTimeout(() => field.focus(), 50);
+  openDialog("keeper", "#keeper-key");
 }
 
 function closeKeeper() {
-  document.getElementById("keeper").classList.remove("open");
+  closeDialog("keeper");
   _afterUnlock = null;
 }
 
@@ -552,10 +675,10 @@ async function openManage(tab) {
   switchTab(tab || "enclosures");
   document.documentElement.classList.add("modal-open");
   document.body.classList.add("modal-open");
-  document.getElementById("manage").classList.add("open");
+  openDialog("manage");
 }
 function closeManage() {
-  document.getElementById("manage").classList.remove("open");
+  closeDialog("manage");
   document.documentElement.classList.remove("modal-open");
   document.body.classList.remove("modal-open");
   refreshDashboard();
@@ -640,7 +763,7 @@ function editEnclosure(id) {
     _species.map(s => `<option value="${s.id}" ${s.id === sel ? "selected" : ""}>${esc(s.name)}</option>`).join("");
   openEditor(`
     <div class="sheet-head"><h2>${enc ? "Edit" : "New"} enclosure</h2>
-      <button class="close-btn" onclick="closeEditor()">✕</button></div>
+      <button class="close-btn" onclick="closeEditor()" aria-label="Close editor">✕</button></div>
     <div class="field"><label>Name</label>
       <input type="text" id="ef-name" value="${esc(enc?.name || "")}" placeholder="e.g. Achilles"></div>
     <div class="field"><label>Species (sets acceptable ranges)</label>
@@ -740,7 +863,7 @@ function editSensor(mac) {
   const s = _sensors.find(x => x.mac === mac);
   if (!s) return;
   openEditor(`
-    <div class="sheet-head"><h2>Edit sensor</h2><button class="close-btn" onclick="closeEditor()">✕</button></div>
+    <div class="sheet-head"><h2>Edit sensor</h2><button class="close-btn" onclick="closeEditor()" aria-label="Close editor">✕</button></div>
     <div class="field"><label>Name</label><input type="text" id="sf-name" value="${esc(s.name)}"></div>
     <div class="field"><label>Species (optional label)</label><input type="text" id="sf-species" value="${esc(s.species || "")}"></div>
     <div class="row-mac" style="margin-bottom:14px">${esc(s.mac)}</div>
@@ -777,8 +900,7 @@ function isWarmPos(p) { return /warm|hot|bask/i.test(p || ""); }
 
 async function openPair() {
   await pairLoadEnc();
-  document.getElementById("manage").classList.remove("open"); // come back to it on close
-  document.getElementById("pair").classList.add("open");
+  openDialog("pair");
   renderPairTargets();
   pairPoll();
   if (_pairTimer) clearInterval(_pairTimer);
@@ -786,9 +908,8 @@ async function openPair() {
 }
 function closePair() {
   if (_pairTimer) { clearInterval(_pairTimer); _pairTimer = null; }
-  document.getElementById("pair").classList.remove("open");
+  closeDialog("pair");
   loadManageData();
-  document.getElementById("manage").classList.add("open");
 }
 async function pairLoadEnc() {
   const snapshot = await api("GET", "/api/manage-snapshot");
@@ -939,7 +1060,7 @@ function editSpecies(id) {
   const nv = (nk, dk) => (sp && sp[nk] != null ? sp[nk] : sp?.[dk]);  // night value, default to day
   openEditor(`
     <div class="sheet-head"><h2>${sp ? "Edit" : "New"} species</h2>
-      <button class="close-btn" onclick="closeEditor()">✕</button></div>
+      <button class="close-btn" onclick="closeEditor()" aria-label="Close editor">✕</button></div>
     <div class="field"><label>Name</label>
       <input type="text" id="spf-name" value="${esc(sp?.name || "")}" placeholder="e.g. Ball Python"></div>
 
@@ -1111,7 +1232,7 @@ function renderCieloSettings() {
 function connectCielo() {
   openEditor(`
     <div class="sheet-head"><h2>Connect Cielo Breez</h2>
-      <button class="close-btn" onclick="closeEditor()">✕</button></div>
+      <button class="close-btn" onclick="closeEditor()" aria-label="Close editor">✕</button></div>
     <div class="scan-hint"><b>Important:</b> Cielo permits each API key to be used only once and limits
       generation to three keys per month. Generate a fresh key in the Cielo app, paste it once here,
       and let Bask preserve the resulting token.</div>
@@ -1201,7 +1322,7 @@ function renderHumidifierSettings() {
 function connectVeSync() {
   openEditor(`
     <div class="sheet-head"><h2>Connect VeSync humidifier</h2>
-      <button class="close-btn" onclick="closeEditor()">✕</button></div>
+      <button class="close-btn" onclick="closeEditor()" aria-label="Close editor">✕</button></div>
     <div class="scan-hint"><b>Apple/Google sign-in?</b> Third-party VeSync integrations cannot use
       social sign-in. Create a separate VeSync account with an email and its own password, then use
       VeSync's device-sharing feature to share the humidifier with it. Never enter your Apple password here.</div>
@@ -1251,12 +1372,19 @@ function editThermostat(ip) {
   const t = ip ? _thermostats_cfg.find(x => x.ip === ip) : null;
   openEditor(`
     <div class="sheet-head"><h2>${t ? "Edit" : "Add"} thermostat</h2>
-      <button class="close-btn" onclick="closeEditor()">✕</button></div>
+      <button class="close-btn" onclick="closeEditor()" aria-label="Close editor">✕</button></div>
     <div class="field"><label>IP address</label>
       <input type="text" id="tf-ip" value="${esc(t?.ip || "")}" placeholder="e.g. 192.168.1.50"
              inputmode="decimal" autocomplete="off"></div>
     <div class="field"><label>Display name (optional — defaults to the unit's own name)</label>
       <input type="text" id="tf-name" value="${esc(t?.name || "")}" placeholder="e.g. Rack 1 Herpstat"></div>
+    <div class="field"><label>Temperature unit configured on this Herpstat</label>
+      <select id="tf-unit">
+        <option value="F" ${(t?.temp_unit || _tempUnit) === "F" ? "selected" : ""}>Fahrenheit (°F)</option>
+        <option value="C" ${(t?.temp_unit || _tempUnit) === "C" ? "selected" : ""}>Celsius (°C)</option>
+      </select>
+      <div class="scan-hint">This can differ from Bask's display unit. It keeps historical readings accurate.</div>
+    </div>
     <label class="night-toggle">
       <input type="checkbox" id="tf-enabled" ${t?.enabled === false ? "" : "checked"}>
       <span>Enabled (poll this unit)</span>
@@ -1295,7 +1423,8 @@ async function saveThermostat(ip) {
   if (!newIp) return;
   const name = document.getElementById("tf-name").value.trim() || null;
   const enabled = document.getElementById("tf-enabled").checked;
-  const body = { ip: newIp, name, enabled };
+  const temp_unit = document.getElementById("tf-unit").value;
+  const body = { ip: newIp, name, enabled, temp_unit };
   try {
     if (ip) await api("PUT", `/api/thermostats/${encodeURIComponent(ip)}`, body);
     else await api("POST", "/api/thermostats", body);
@@ -1481,13 +1610,52 @@ async function startUpdate() {
 
 // ── Opt-in phone alerts (via the ntfy app) ───────────────────
 let _ntfy = null;
+let _ntfyDelivery = null;
+
+function alertStatusTime(epoch) {
+  const value = Number(epoch);
+  if (epoch === null || epoch === undefined || !Number.isFinite(value) || value <= 0) {
+    return "not yet";
+  }
+  return new Date(value * 1000).toLocaleString([], {
+    month: "short", day: "numeric", hour: "numeric", minute: "2-digit"
+  });
+}
+
+function alertDeliveryMarkup(status) {
+  if (!status || typeof status !== "object") return "";
+  const pending = Number.isInteger(status.pending) && status.pending > 0 ? status.pending : 0;
+  let summary;
+  if (!status.enabled) {
+    summary = "Phone alerts are turned off.";
+  } else if (pending) {
+    summary = `<b>${pending}</b> alert${pending === 1 ? " is" : "s are"} waiting to send${status.retrying ? " and will retry automatically" : ""}.`;
+  } else {
+    summary = "No alerts are waiting to send.";
+  }
+  const success = `Last alert delivered: <b>${esc(alertStatusTime(status.last_success_at))}</b>`;
+  const retry = status.retrying && status.next_retry_at
+    ? `<div>Next automatic retry: <b>${esc(alertStatusTime(status.next_retry_at))}</b></div>` : "";
+  const error = status.last_error_at
+    ? `<div>Last delivery issue: <b>${esc(alertStatusTime(status.last_error_at))}</b>${status.last_error ? ` — ${esc(status.last_error)}` : ""}</div>`
+    : `<div>No delivery issues recorded.</div>`;
+  return `<div class="ntfy-delivery" role="status" aria-live="polite" aria-atomic="true"
+               aria-label="Phone alert delivery status">
+    <div>${summary}</div><div>${success}</div>${retry}${error}
+  </div>`;
+}
+
 async function refreshAlertsUI() {
   const el = document.getElementById("alerts-setting");
   if (!el) return;
-  try { _ntfy = await api("GET", "/api/ntfy"); } catch (e) { el.innerHTML = ""; return; }
+  try { _ntfy = await api("GET", "/api/ntfy"); }
+  catch (e) { el.innerHTML = ""; return; }
+  try { _ntfyDelivery = await api("GET", "/api/ntfy/delivery"); }
+  catch (e) { _ntfyDelivery = null; }
   if (!_ntfy.enabled) {
     el.innerHTML = `<button class="btn primary" onclick="enableAlerts()">Set up phone alerts</button>
-      <div class="muted-note" style="padding:6px 0 0;text-align:left">Free, ~1 minute. Uses the ntfy notification app.</div>`;
+      <div class="muted-note" style="padding:6px 0 0;text-align:left">Free, ~1 minute. Uses the ntfy notification app.</div>
+      ${alertDeliveryMarkup(_ntfyDelivery)}`;
     return;
   }
   const qr = _ntfy.qr
@@ -1510,6 +1678,7 @@ async function refreshAlertsUI() {
         <button class="btn on" onclick="testAlert()">Send test</button>
         <button class="btn" onclick="disableAlerts()">Turn off</button>
       </div>
+      ${alertDeliveryMarkup(_ntfyDelivery)}
       <div class="muted-note" style="padding:8px 0 0;text-align:left">Once subscribed, tap <b>Send test</b> — it should pop up on your phone.</div>
     </div>`;
 }
@@ -1591,9 +1760,9 @@ async function setUnit(u) {
 // ── editor sheet plumbing ────────────────────────────────────
 function openEditor(html) {
   document.getElementById("editor-sheet").innerHTML = html;
-  document.getElementById("editor").classList.add("open");
+  openDialog("editor");
 }
-function closeEditor() { document.getElementById("editor").classList.remove("open"); }
+function closeEditor() { closeDialog("editor"); }
 
 // ── init ─────────────────────────────────────────────────────
 async function loadSpecies() {

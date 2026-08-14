@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Bask</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <!-- Installable app (Add to Home Screen) -->
@@ -13,7 +13,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Bask">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
-  <link rel="stylesheet" href="style.css?v=20260805-4">
+  <link rel="stylesheet" href="style.css?v=20260813-1">
 </head>
 <body>
   <!-- ── Top bar: title, at-a-glance status counts, manage button ── -->
@@ -56,14 +56,18 @@
   <div id="updated" class="updated-stamp"></div>
 
   <!-- ── Per-enclosure detail sheet ── -->
-  <div id="detail" class="sheet-overlay" onclick="if(event.target===this)closeDetail()">
+  <div id="detail" class="sheet-overlay" role="dialog" aria-modal="true"
+       aria-labelledby="detail-title" aria-hidden="true" inert tabindex="-1"
+       onclick="if(event.target===this)closeDetail()">
     <div class="sheet" id="detail-sheet"></div>
   </div>
 
   <!-- ── Manage overlay (full screen, tabbed) ── -->
-  <div id="manage" class="manage-overlay">
+  <div id="manage" class="manage-overlay" role="dialog" aria-modal="true"
+       aria-labelledby="manage-title" aria-hidden="true" inert tabindex="-1">
     <div class="manage-panel">
       <div class="manage-head">
+        <h1 id="manage-title" class="sr-only">Manage Bask</h1>
         <div class="manage-tabs">
           <button class="mtab active" data-tab="enclosures" onclick="switchTab('enclosures')">Enclosures</button>
           <button class="mtab" data-tab="sensors" onclick="switchTab('sensors')">Sensors</button>
@@ -71,7 +75,7 @@
           <button class="mtab" data-tab="thermostats" onclick="switchTab('thermostats')">Thermostats</button>
           <button class="mtab" data-tab="settings" onclick="switchTab('settings')">Settings</button>
         </div>
-        <button class="close-btn" onclick="closeManage()" aria-label="Close">✕</button>
+        <button class="close-btn" onclick="closeManage()" aria-label="Close management">✕</button>
       </div>
       <div class="manage-body">
         <section class="pane active" id="pane-enclosures"></section>
@@ -84,9 +88,11 @@
   </div>
 
   <!-- ── Head Keeper unlock (shown when setup is locked) ── -->
-  <div id="keeper" class="sheet-overlay" onclick="if(event.target===this)closeKeeper()">
+  <div id="keeper" class="sheet-overlay" role="dialog" aria-modal="true"
+       aria-labelledby="keeper-title" aria-hidden="true" inert tabindex="-1"
+       onclick="if(event.target===this)closeKeeper()">
     <div class="sheet keeper-sheet">
-      <h2>🔑 Head Keeper key</h2>
+      <h2 id="keeper-title">🔑 Head Keeper key</h2>
       <p class="keeper-note">The dashboard is open to everyone in the house. Changing
         the setup — sensors, enclosures, ranges, integrations — needs the key.</p>
       <form onsubmit="submitKeeperUnlock(event)">
@@ -102,16 +108,19 @@
   </div>
 
   <!-- Generic editor sheet reused by enclosure/sensor/species forms -->
-  <div id="editor" class="sheet-overlay" onclick="if(event.target===this)closeEditor()">
+  <div id="editor" class="sheet-overlay" role="dialog" aria-modal="true"
+       aria-label="Edit Bask setup" aria-hidden="true" inert tabindex="-1"
+       onclick="if(event.target===this)closeEditor()">
     <div class="sheet" id="editor-sheet"></div>
   </div>
 
   <!-- ── Pair-by-proximity wizard (full screen) ── -->
-  <div id="pair" class="manage-overlay">
+  <div id="pair" class="manage-overlay" role="dialog" aria-modal="true"
+       aria-labelledby="pair-title" aria-hidden="true" inert tabindex="-1">
     <div class="manage-panel pair-panel">
       <div class="manage-head">
-        <h2 class="pair-title">Pair sensors</h2>
-        <button class="close-btn" onclick="closePair()" aria-label="Close">✕</button>
+        <h2 class="pair-title" id="pair-title">Pair sensors</h2>
+        <button class="close-btn" onclick="closePair()" aria-label="Close pairing">✕</button>
       </div>
       <div class="manage-body pair-body">
         <div id="pair-nearest" class="pair-nearest"></div>
@@ -119,9 +128,9 @@
       </div>
     </div>
   </div>
-  <div id="toast" class="toast"></div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-  <script src="app.js?v=20260805-4"></script>
+  <script src="app.js?v=20260813-1"></script>
   <!-- Keeps Amazon Echo Show's Silk browser from timing out to the home screen.
        Only activates on Silk's user-agent (no effect on laptop/phone). -->
   <script src="keep.js"></script>

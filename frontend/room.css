@@ -173,11 +173,12 @@ h2 { margin-bottom: 0; font-size: clamp(25px, 2.75vh, 40px); letter-spacing: -.0
 .task-ring span { margin-top: 5px; color: var(--muted); font-size: clamp(11px, 1vh, 13px); text-transform: uppercase; letter-spacing: .1em; }
 .progress-track { flex: 0 0 auto; height: 8px; background: rgba(255,255,255,.045); }
 .progress-track span { display: block; width: 0; height: 100%; background: linear-gradient(90deg, #5ebf83, #9ee5b2); transition: width .5s ease; }
-.task-metrics { flex: 0 0 auto; min-height: clamp(72px, 9.2vh, 96px); display: grid; grid-template-columns: repeat(3, 1fr); border-bottom: 1px solid var(--line); }
+.task-metrics { flex: 0 0 auto; min-height: clamp(72px, 9.2vh, 96px); display: grid; grid-template-columns: repeat(5, 1fr); border-bottom: 1px solid var(--line); }
 .task-metric { display: grid; place-content: center; text-align: center; border-right: 1px solid var(--line); }
 .task-metric:last-child { border-right: 0; }
 .task-metric strong { font-size: clamp(24px, 2.4vh, 34px); line-height: 1; }
 .task-metric span { margin-top: 7px; color: var(--muted); font-size: clamp(12px, 1.15vh, 15px); text-transform: uppercase; letter-spacing: .1em; }
+.task-metric.missed strong { color: var(--amber); }
 .task-metric.overdue strong { color: var(--red); }
 .task-list { flex: 1; min-height: 0; overflow: hidden; padding: 12px 22px 18px; }
 .task-item { display: grid; grid-template-columns: 12px 1fr auto; gap: 16px; align-items: center; min-height: clamp(58px, 6vh, 82px); padding: 12px 10px; border-bottom: 1px solid var(--line); }

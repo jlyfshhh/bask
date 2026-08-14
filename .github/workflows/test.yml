@@ -5,6 +5,10 @@ on:
   pull_request:
   # Publication depends on this workflow, so a red build cannot ship an image.
   workflow_call:
+    secrets:
+      PRIVACY_DENYLIST:
+        description: Private identities to reject; stored only as a repository secret
+        required: false
 
 permissions:
   contents: read
@@ -20,7 +24,18 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt -r requirements-dev.txt
       - name: Shell syntax
-        run: bash -n get-bask.sh deploy/install.sh docker-entrypoint.sh scripts/backup.sh
+        run: bash -n get-bask.sh deploy/install.sh docker-entrypoint.sh scripts/backup.sh scripts/privacy-scan.sh tests/installer.sh tests/backup.sh tests/privacy-scan.sh
+      - name: Privacy scan behavior
+        run: bash tests/privacy-scan.sh
+      - name: Privacy scan
+        env:
+          PRIVACY_DENYLIST: ${{ secrets.PRIVACY_DENYLIST }}
+          PRIVACY_SCAN_STRICT: ${{ (github.actor == 'dependabot[bot]' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && '0' || '1' }}
+        run: bash scripts/privacy-scan.sh
+      - name: Standalone installer rollback and backup safety
+        run: |
+          bash tests/installer.sh
+          bash tests/backup.sh
       - name: Python compile and data-path smoke test
         run: |
           python -m py_compile server/*.py scanner/*.py
@@ -28,7 +43,10 @@ jobs:
           PYTHONPATH="$PWD:$PWD/scanner" python tests/test_cielo.py
           PYTHONPATH="$PWD:$PWD/scanner" python tests/test_vesync.py
           PYTHONPATH="$PWD:$PWD/scanner" python tests/test_keeper.py
+          PYTHONPATH="$PWD:$PWD/scanner" python tests/test_keeper_throttle.py
           PYTHONPATH="$PWD:$PWD/scanner" python tests/test_keeper_api.py
+          PYTHONPATH="$PWD:$PWD/scanner" python tests/test_alerts.py
+          PYTHONPATH="$PWD:$PWD/scanner" python tests/test_response_security.py
           PYTHONPATH="$PWD:$PWD/scanner" python tests/test_config_concurrency.py
           PYTHONPATH="$PWD:$PWD/scanner" python tests/test_import_schema.py
           PYTHONPATH="$PWD:$PWD/scanner" python tests/test_render_escaping.py
@@ -37,6 +55,8 @@ jobs:
           PYTHONPATH="$PWD:$PWD/scanner" python tests/test_room_status.py
           PYTHONPATH="$PWD:$PWD/scanner" python tests/test_container_boundary.py
           PYTHONPATH="$PWD:$PWD/scanner" python tests/test_climate_log.py
+          PYTHONPATH="$PWD:$PWD/scanner" python tests/test_thermostat_units.py
           node tests/test_frontend_concurrency.js
+          node tests/test_accessibility.js
       - name: Container build
         run: docker build -t bask:test .

@@ -34,7 +34,9 @@ from pydantic import BaseModel, Field, field_validator
 sys.path.insert(0, str(Path(__file__).parent.parent / "scanner"))
 import db  # noqa: E402
 from server import keeper
+from server.alerts import AlertStateStore
 from server.cielo import CieloMonitor
+from server.keeper_throttle import KeeperUnlockThrottle, key_fingerprint, source_key
 from server.vesync import VeSyncHumidifierMonitor
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -44,6 +46,8 @@ ROOT = Path(__file__).parent.parent
 DATA_DIR = Path(os.environ.get("BASK_DATA_DIR", ROOT))
 CONFIG_PATH = DATA_DIR / "config.json"
 FRONTEND_PATH = ROOT / "frontend"
+alert_delivery = AlertStateStore(DATA_DIR / "alert-state.json")
+keeper_unlock_throttle = KeeperUnlockThrottle()
 cielo = CieloMonitor(DATA_DIR / "cielo-secrets.json")
 humidifier = VeSyncHumidifierMonitor(
     DATA_DIR / "vesync-secrets.json", DATA_DIR / "vesync-token.json")
@@ -84,6 +88,13 @@ def _normalise_config(cfg: dict) -> dict:
     cfg["settings"].setdefault("day_start_hour", 8)   # heat on  → day ranges
     cfg["settings"].setdefault("day_end_hour", 20)    # heat off → night ranges
     cfg.setdefault("thermostats", [])                 # optional Herpstat SpyderWeb units
+    # Herpstat's RAWSTATUS numbers do not identify their unit.  Older Bask
+    # versions implicitly assumed the thermostat matched Bask's display unit;
+    # freeze that assumption per thermostat during migration so a later UI
+    # display-unit change cannot silently bend the long-term climate history.
+    for thermostat in cfg["thermostats"]:
+        if isinstance(thermostat, dict):
+            thermostat.setdefault("temp_unit", cfg["settings"]["temp_unit"])
     cfg.setdefault("ntfy", {})                        # opt-in phone alerts via ntfy
     cfg["ntfy"].setdefault("server", "https://ntfy.sh")
     cfg["ntfy"].setdefault("topic", "")
@@ -273,7 +284,7 @@ def _fetch_herpstat(ip: str) -> dict:
     raise last_error
 
 
-def _parse_herpstat(ip: str, raw: dict, name_override) -> dict:
+def _parse_herpstat(ip: str, raw: dict, name_override, temp_unit: str = "F") -> dict:
     sysv = raw.get("system", {})
     safety_ok = "normal" in str(sysv.get("safetyrelay", "")).lower()
     outputs = []
@@ -298,6 +309,7 @@ def _parse_herpstat(ip: str, raw: dict, name_override) -> dict:
         })
     return {
         "ip": ip, "name": name_override or sysv.get("nickname") or ip,
+        "temp_unit": temp_unit,
         "safety_ok": safety_ok, "reachable": True,
         "last_seen": int(time.time()), "outputs": outputs,
     }
@@ -312,10 +324,13 @@ async def _herpstat_loop():
                     continue
                 try:
                     raw = await asyncio.to_thread(_fetch_herpstat, ip)
-                    _thermostats[ip] = _parse_herpstat(ip, raw, t.get("name"))
+                    source_unit = t.get("temp_unit", "F")
+                    _thermostats[ip] = _parse_herpstat(
+                        ip, raw, t.get("name"), source_unit)
                 except Exception as e:
                     prev = _thermostats.get(ip, {})
                     _thermostats[ip] = {"ip": ip, "name": t.get("name") or prev.get("name") or ip,
+                                        "temp_unit": t.get("temp_unit", prev.get("temp_unit", "F")),
                                         "reachable": False, "outputs": prev.get("outputs", [])}
                     log.warning(f"herpstat {ip} unreachable: {e}")
         except Exception as e:
@@ -377,6 +392,29 @@ def _to_c(value, unit: str | None):
     return f_to_c(float(value)) if (unit or "F").upper() == "F" else float(value)
 
 
+def _convert_temp(value, source_unit: str | None, display_unit: str):
+    """Convert an instrument value without confusing source and display units."""
+    if value is None:
+        return None
+    celsius = _to_c(value, source_unit)
+    return c_to_f(celsius) if display_unit.upper() == "F" else celsius
+
+
+def _thermostat_for_display(status: dict, display_unit: str) -> dict:
+    """Return a display-unit copy while leaving the poller's raw cache intact."""
+    source_unit = status.get("temp_unit", display_unit)
+    converted = {**status, "temp_unit": display_unit}
+    converted["outputs"] = [
+        {
+            **output,
+            "temp": _convert_temp(output.get("temp"), source_unit, display_unit),
+            "setpoint": _convert_temp(output.get("setpoint"), source_unit, display_unit),
+        }
+        for output in status.get("outputs", [])
+    ]
+    return converted
+
+
 def _collect_climate(cfg: dict) -> tuple[list[dict], list[dict]]:
     """Snapshot every instrument. Returns (samples, events)."""
     samples: list[dict] = []
@@ -425,14 +463,13 @@ def _collect_climate(cfg: dict) -> tuple[list[dict], list[dict]]:
         samples.append({"source": source, "series": mac, "metric": "humidity",
                         "value": r.get("humidity"), "label": label})
 
-    # Herpstat outputs. Bask labels these with the keeper's *display* preference
-    # rather than the thermostat's own unit — that is the best information
-    # available here, and it is converted rather than stored raw so a later
-    # change to that preference cannot retroactively reinterpret the history.
-    unit = cfg.get("settings", {}).get("temp_unit", "F")
+    # Herpstat RAWSTATUS does not carry a unit. Each configured thermostat has
+    # an explicit source unit; it is deliberately independent of Bask's display
+    # preference so changing the latter cannot corrupt future history.
     for ip, status in _thermostats.items():
         if not status.get("reachable"):
             continue
+        source_unit = status.get("temp_unit", "F")
         unit_name = status.get("name") or ip
         for index, o in enumerate(status.get("outputs", []), start=1):
             # Keyed by position, not by nickname: renaming an output in the
@@ -440,18 +477,22 @@ def _collect_climate(cfg: dict) -> tuple[list[dict], list[dict]]:
             key = f"{ip}#{index}"
             label = f"{unit_name} / {o.get('name') or index}"
             samples.append({"source": "herpstat", "series": key, "metric": "temp_c",
-                            "value": _to_c(o.get("temp"), unit), "label": label})
+                            "value": _to_c(o.get("temp"), source_unit), "label": label})
             samples.append({"source": "herpstat", "series": key, "metric": "setpoint_c",
-                            "value": _to_c(o.get("setpoint"), unit), "label": label})
+                            "value": _to_c(o.get("setpoint"), source_unit), "label": label})
             samples.append({"source": "herpstat", "series": key, "metric": "output_pct",
                             "value": o.get("output_pct"), "label": label})
 
     # The mini-split. Its own thermometer is the one the unit acts on, so it is
     # logged as a first-class series rather than trusted as "the room" — the
     # gap between it and the sensors is itself the thing worth measuring.
-    c = cielo.public_status()
+    # The public Cielo status intentionally omits its cloud device ID. The
+    # internal climate status supplies only a stable pseudonymous series key,
+    # preventing two selected controllers from being spliced into one line.
+    climate_status = getattr(cielo, "climate_status", cielo.public_status)
+    c = climate_status()
     if c.get("configured") and not c.get("stale") and c.get("online"):
-        key = c.get("selected_device_id") or "cielo"
+        key = c.get("series_key") or "cielo"
         label = c.get("name") or "Mini-split"
         cu = c.get("temp_unit", "F")
         samples.append({"source": "cielo", "series": key, "metric": "temp_c",
@@ -531,7 +572,49 @@ async def lifespan(app: FastAPI):
 # the browser's same-origin policy blocks other websites from reading this API,
 # and cross-origin JSON writes fail their preflight — important because the API
 # is unauthenticated and meant only for a trusted local network.
-app = FastAPI(lifespan=lifespan)
+# Bask is an appliance UI, not an API-development host. The interactive docs
+# and schema publish a complete route inventory and are unnecessary here.
+app = FastAPI(
+    lifespan=lifespan,
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
+
+
+# The frontend predates a bundler and still has generated inline event-handler
+# attributes. `unsafe-inline` remains explicit until those are removed; the
+# rest of the policy confines code, connections, media, and framing to Bask.
+CONTENT_SECURITY_POLICY = "; ".join((
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline'",
+    # CSP3 browsers can distinguish external script elements from the legacy
+    # inline button handlers. Older browsers safely fall back to script-src.
+    "script-src-elem 'self'",
+    "script-src-attr 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "media-src 'self'",
+    "connect-src 'self'",
+    "worker-src 'self'",
+    "manifest-src 'self'",
+    "frame-src 'none'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+))
+
+SECURITY_HEADERS = {
+    "Content-Security-Policy": CONTENT_SECURITY_POLICY,
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": (
+        "accelerometer=(), camera=(), geolocation=(), gyroscope=(), "
+        "magnetometer=(), microphone=(), payment=(), usb=()"
+    ),
+}
 
 
 # ── Shared API conventions with Shed ─────────────────────────────────────────
@@ -552,10 +635,23 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
     )
 
 
+@app.exception_handler(Exception)
+async def unexpected_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Keep unexpected failures client-safe and inside the browser boundary."""
+    log.exception("Unhandled request failure on %s", request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={"error": "Internal server error", "detail": "Internal server error"},
+        headers={"Cache-Control": "no-store", **SECURITY_HEADERS},
+    )
+
+
 @app.middleware("http")
-async def no_store_api_responses(request: Request, call_next):
-    """API data is live; only the static frontend should ever be cached."""
+async def response_policy(request: Request, call_next):
+    """Apply the browser boundary to static files, API data, and errors."""
     response = await call_next(request)
+    for header, value in SECURITY_HEADERS.items():
+        response.headers.setdefault(header, value)
     if request.url.path.startswith("/api/"):
         response.headers.setdefault("Cache-Control", "no-store")
         expected = getattr(request.state, "bask_expected_revision", None)
@@ -579,7 +675,9 @@ def manage_snapshot(response: Response):
     """One coherent, non-secret snapshot for all setup editors."""
     cfg = load_config()
     response.headers[CONFIG_REVISION_HEADER] = str(cfg[CONFIG_REVISION_KEY])
-    thermostats = [{**item, "status": _thermostats.get(item.get("ip"), {})}
+    display_unit = cfg["settings"]["temp_unit"]
+    thermostats = [{**item, "status": _thermostat_for_display(
+                        _thermostats.get(item.get("ip"), {}), display_unit)}
                    for item in cfg.get("thermostats", [])]
     return {
         "revision": cfg[CONFIG_REVISION_KEY],
@@ -645,12 +743,32 @@ def keeper_status(request: Request):
 
 
 @app.post("/api/keeper/unlock")
-def keeper_unlock(payload: KeeperUnlock, response: Response):
+def keeper_unlock(payload: KeeperUnlock, request: Request, response: Response):
     record = load_config().get("keeper")
-    if not keeper.is_configured(record):
+    state = keeper.keeper_state(record)
+    if state == "unconfigured":
         return {"ok": True, "configured": False, "unlocked": True}
+    if state == "corrupt":
+        raise HTTPException(503, keeper.RECOVERY)
+    source = source_key(request)
+    fingerprint = key_fingerprint(payload.key)
+    retry_after = keeper_unlock_throttle.check(source, fingerprint)
+    if retry_after:
+        raise HTTPException(
+            429,
+            "Too many unlock attempts. Wait a moment and try again.",
+            headers={"Retry-After": str(retry_after)},
+        )
     if not keeper.verify_key(payload.key, record):
+        retry_after = keeper_unlock_throttle.fail(source, fingerprint)
+        if retry_after:
+            raise HTTPException(
+                429,
+                "Too many unlock attempts. Wait a moment and try again.",
+                headers={"Retry-After": str(retry_after)},
+            )
         raise HTTPException(401, "That key does not match.")
+    keeper_unlock_throttle.succeed(source, fingerprint)
     # Older installs have no signing secret yet; mint one on first unlock.
     if not isinstance(record.get("session_secret"), str):
         def migrate_legacy_session(cfg: dict) -> dict:
@@ -856,7 +974,8 @@ def _build_dashboard(cfg):
     counts = {"ok": 0, "warning": 0, "danger": 0, "stale": 0, "no_data": 0, "no_ranges": 0}
     for e in enclosures_out:
         counts[e["status"]] = counts.get(e["status"], 0) + 1
-    thermostats = [_thermostats[t["ip"]] for t in cfg.get("thermostats", [])
+    thermostats = [_thermostat_for_display(_thermostats[t["ip"]], unit)
+                   for t in cfg.get("thermostats", [])
                    if t.get("ip") in _thermostats]
     return {"enclosures": enclosures_out, "ungrouped": ungrouped,
             "counts": counts, "temp_unit": unit, "updated_at": now,
@@ -977,7 +1096,9 @@ def _room_shed_data(data: Any) -> dict | None:
     if not isinstance(data, dict) or not isinstance(data.get("summary"), dict):
         return None
     summary = data["summary"]
-    count_keys = ("total", "completed", "remaining", "overdue")
+    count_keys = (
+        "total", "completed", "refused", "skipped", "missed", "remaining", "overdue",
+    )
     if any(not isinstance(summary.get(key), int) or isinstance(summary.get(key), bool)
            or summary[key] < 0 for key in count_keys):
         return None
@@ -988,7 +1109,14 @@ def _room_shed_data(data: Any) -> dict | None:
     overdue = [_room_shed_task(item) for item in data["overdue"]]
     if any(item is None for item in pending) or any(item is None for item in overdue):
         return None
-    if (summary["total"] != summary["completed"] + summary["remaining"]
+    # Refusals are completed care, not a fifth mutually-exclusive disposition.
+    # Every scheduled task must otherwise be exactly completed, skipped, missed,
+    # or remaining; rejecting a broken total prevents Haven from inventing an
+    # all-clear when Shed and Bask disagree about the contract.
+    if (summary["refused"] > summary["completed"]
+            or summary["total"] != (
+                summary["completed"] + summary["skipped"]
+                + summary["missed"] + summary["remaining"])
             or summary["remaining"] != len(pending)
             or summary["overdue"] != len(overdue)):
         return None
@@ -1440,6 +1568,8 @@ class ThermostatPayload(BaseModel):
 
     name: str | None = Field(None, max_length=64)
     enabled: bool = True
+    # The unit configured on the Herpstat itself, not Bask's display preference.
+    temp_unit: Literal["F", "C"] | None = None
 
 
 class ThermostatTest(BaseModel):
@@ -1449,7 +1579,9 @@ class ThermostatTest(BaseModel):
 @app.get("/api/thermostats")
 def list_thermostats():
     cfg = load_config()
-    out = [{**t, "status": _thermostats.get(t.get("ip"), {})}
+    display_unit = cfg["settings"]["temp_unit"]
+    out = [{**t, "status": _thermostat_for_display(
+                _thermostats.get(t.get("ip"), {}), display_unit)}
            for t in cfg.get("thermostats", [])]
     return {"thermostats": out, "temp_unit": cfg["settings"]["temp_unit"]}
 
@@ -1458,6 +1590,18 @@ def list_thermostats():
 def climate_series():
     """Every series the climate log has ever seen, for building a query."""
     return {"series": db.get_climate_series(), "temp_unit": load_config()["settings"]["temp_unit"]}
+
+
+def _climate_filter(value: str | None, label: str) -> list[str] | None:
+    """Bound an open-LAN query before it becomes a SQLite placeholder list."""
+    if not value:
+        return None
+    if len(value) > 2_048:
+        raise HTTPException(400, f"{label} filter is too long")
+    values = list(dict.fromkeys(part.strip() for part in value.split(",") if part.strip()))
+    if len(values) > 32 or any(len(part) > 64 for part in values):
+        raise HTTPException(400, f"{label} filter has too many or oversized values")
+    return values or None
 
 
 @app.get("/api/climate")
@@ -1473,12 +1617,18 @@ def climate_history(hours: int = 24, resolution: str = "auto",
     hours = max(1, min(int(hours), 24 * 400))
     if resolution not in ("auto", "raw", "hourly"):
         raise HTTPException(400, "resolution must be auto, raw or hourly")
+    # Raw is one row per minute per metric. Long-range queries should use the
+    # hourly rollup; allowing an explicit 400-day raw request would make a LAN
+    # client ask the server to build a needlessly huge response even though raw
+    # data is retained for only a fortnight.
+    if resolution == "raw" and hours > 48:
+        raise HTTPException(400, "raw resolution is limited to 48 hours; use hourly or auto")
     end = int(time.time())
     start = end - hours * 3600
     data = db.get_climate(
         start, end, resolution,
-        sources=[s for s in (source or "").split(",") if s] or None,
-        metrics=[m for m in (metric or "").split(",") if m] or None,
+        sources=_climate_filter(source, "source"),
+        metrics=_climate_filter(metric, "metric"),
     )
     data["temp_unit"] = load_config()["settings"]["temp_unit"]
     return data
@@ -1518,7 +1668,8 @@ def add_thermostat(payload: ThermostatPayload, _: None = Keeper,
         if any(thermostat.get("ip") == ip for thermostat in cfg["thermostats"]):
             raise HTTPException(400, "Thermostat already added")
         cfg["thermostats"].append(
-            {"ip": ip, "name": payload.name, "enabled": payload.enabled})
+            {"ip": ip, "name": payload.name, "enabled": payload.enabled,
+             "temp_unit": payload.temp_unit or cfg["settings"]["temp_unit"]})
 
     mutate_config(revision, add)
     return {"ok": True}
@@ -1535,6 +1686,8 @@ def update_thermostat(ip: str, payload: ThermostatPayload, _: None = Keeper,
                 thermostat["ip"] = new_ip
                 thermostat["name"] = payload.name
                 thermostat["enabled"] = payload.enabled
+                if payload.temp_unit is not None:
+                    thermostat["temp_unit"] = payload.temp_unit
                 return
         raise HTTPException(404, "Thermostat not found")
 
@@ -1688,9 +1841,7 @@ def _ntfy_publish(cfg, title: str, body: str, tags: str = "", priority: str = ""
 
 # ── Alert loop: notify on transitions into (and back out of) a problem state ──
 NOTIFY_POLL = 60
-BAD_STATES = {"warning", "danger", "stale"}
-_last_status: dict[str, str] = {}
-_notify_seeded = False
+MAX_DELIVERIES_PER_CYCLE = 5
 
 
 def _alert_text(e: dict) -> str:
@@ -1706,31 +1857,67 @@ def _alert_text(e: dict) -> str:
     return f"{e['name']}: " + (" + ".join(issues) or "out of range")
 
 
-async def _notify_loop():
-    """Compare each enclosure's status to last cycle; push on meaningful changes.
+def _alert_observations(enclosures: list[dict]) -> list[dict]:
+    """Project dashboard data down to the durable delivery state machine."""
+    return [{
+        "id": e["id"],
+        "status": e["status"],
+        "alert_title": "Bask alert",
+        "alert_body": _alert_text(e),
+        "alert_tags": "warning",
+        "alert_priority": "high",
+        "recovery_title": "Bask",
+        "recovery_body": f"{e['name']} is back to normal",
+        "recovery_tags": "white_check_mark",
+        "recovery_priority": "",
+    } for e in enclosures]
 
-    The first pass only seeds the baseline so we never fire a burst of alerts for
-    conditions that were already true when the server started.
+
+async def _notify_loop():
+    """Persist stable transitions before publishing and retry until confirmed.
+
+    The first enabled pass only seeds a durable baseline. A failed send remains
+    in the owner-only outbox across retries and process restarts.
     """
-    global _notify_seeded
     while True:
         try:
             cfg = load_config()
-            if cfg["ntfy"].get("enabled") and cfg["ntfy"].get("topic"):
-                for e in _build_dashboard(cfg)["enclosures"]:
-                    prev, cur = _last_status.get(e["id"]), e["status"]
-                    _last_status[e["id"]] = cur
-                    if not _notify_seeded or cur == prev:
-                        continue
-                    if cur in BAD_STATES:
-                        await asyncio.to_thread(_ntfy_publish, cfg, "Bask alert",
-                                                _alert_text(e), "warning", "high")
-                    elif cur == "ok" and prev in BAD_STATES:
-                        await asyncio.to_thread(_ntfy_publish, cfg, "Bask",
-                                                f"{e['name']} is back to normal", "white_check_mark")
-                _notify_seeded = True
-        except Exception as e:
-            log.warning(f"notify loop error: {e}")
+            enabled = bool(cfg["ntfy"].get("enabled") and cfg["ntfy"].get("topic"))
+            enclosures = _build_dashboard(cfg)["enclosures"] if enabled else []
+            now = time.time()
+            await asyncio.to_thread(
+                alert_delivery.observe,
+                _alert_observations(enclosures),
+                enabled=enabled,
+                now=now,
+            )
+
+            if enabled:
+                # Each enclosure has at most one pending event. Bound work per
+                # cycle so an outage cannot monopolize the event loop.
+                for _ in range(MAX_DELIVERIES_PER_CYCLE):
+                    pending = alert_delivery.next_due(now=time.time())
+                    if pending is None:
+                        break
+                    try:
+                        await asyncio.to_thread(
+                            _ntfy_publish,
+                            cfg,
+                            pending["title"],
+                            pending["body"],
+                            pending["tags"],
+                            pending["priority"],
+                        )
+                    except Exception:
+                        await asyncio.to_thread(
+                            alert_delivery.failed, pending["id"], now=time.time())
+                        # urllib errors can include the private topic URL.
+                        log.warning("Phone alert delivery failed; retry scheduled")
+                    else:
+                        await asyncio.to_thread(
+                            alert_delivery.succeeded, pending["id"], now=time.time())
+        except Exception:
+            log.exception("Phone alert loop failed")
         await asyncio.sleep(NOTIFY_POLL)
 
 
@@ -1751,14 +1938,28 @@ def ntfy_status(_: None = Keeper):
             "qr": _QR_OK}
 
 
+@app.get("/api/ntfy/delivery")
+def ntfy_delivery_status(_: None = Keeper):
+    """Return keeper-only delivery health without secrets or message text."""
+    cfg = load_config()
+    enabled = bool(cfg["ntfy"].get("enabled") and cfg["ntfy"].get("topic"))
+    return alert_delivery.status(enabled=enabled)
+
+
 @app.post("/api/ntfy")
 def ntfy_set(payload: NtfyToggle, _: None = Keeper, revision: int = ConfigWrite):
-    def update(cfg: dict) -> None:
+    def update(cfg: dict) -> bool:
+        was_enabled = bool(cfg["ntfy"].get("enabled") and cfg["ntfy"].get("topic"))
         cfg["ntfy"]["enabled"] = payload.enabled
         if not cfg["ntfy"].get("topic"):
             cfg["ntfy"]["topic"] = "bask-" + secrets.token_hex(8)
+        return was_enabled
 
-    mutate_config(revision, update)
+    was_enabled = mutate_config(revision, update)
+    # A genuine off→on transition starts from the next current snapshot rather
+    # than replaying conditions that changed while notifications were disabled.
+    if not payload.enabled or not was_enabled:
+        alert_delivery.disable()
     return {"ok": True, "enabled": payload.enabled}
 
 
@@ -1770,8 +1971,11 @@ def ntfy_test(_: None = Keeper):
     try:
         _ntfy_publish(cfg, "Bask",
                       "Alerts are working — I'll ping you if an enclosure needs attention.", "lizard")
-    except Exception as e:
-        raise HTTPException(502, f"Could not reach the ntfy server ({e})")
+    except Exception:
+        # urllib exceptions commonly contain the complete destination URL,
+        # whose final path component is the private ntfy topic.
+        log.warning("Phone alert test delivery failed")
+        raise HTTPException(502, "Could not reach the notification service. Try again later.")
     return {"ok": True}
 
 
@@ -1914,6 +2118,9 @@ def _validate_import(data: dict) -> dict:
             "ip": host,
             "name": _clean_str(t.get("name"), None) if t.get("name") is not None else None,
             "enabled": bool(t.get("enabled", True)),
+            "temp_unit": ThermostatPayload(
+                ip=host, temp_unit=t.get("temp_unit")
+            ).temp_unit or out.get("settings", {}).get("temp_unit", "F"),
         })
     if not (out["sensors"] or out["enclosures"] or out["species"]):
         raise ValueError("no recognizable Bask settings in this file")
@@ -1957,7 +2164,8 @@ def _portable_export(cfg: dict) -> dict:
         "enclosures": cfg.get("enclosures", []),
         "species": cfg.get("species", []),
         "thermostats": [
-            {"ip": t.get("ip"), "name": t.get("name"), "enabled": t.get("enabled", True)}
+            {"ip": t.get("ip"), "name": t.get("name"), "enabled": t.get("enabled", True),
+             "temp_unit": t.get("temp_unit", cfg.get("settings", {}).get("temp_unit", "F"))}
             for t in cfg.get("thermostats", []) if isinstance(t, dict)
         ],
         "settings": cfg.get("settings", {}),

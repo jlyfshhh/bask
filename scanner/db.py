@@ -137,6 +137,16 @@ CLIMATE_SCHEMA = (
         PRIMARY KEY (hour, series_id)
     ) WITHOUT ROWID
     """,
+    # Exclusive high-water mark for the hourly rollup. Without this, the
+    # maintenance job has to rediscover its progress by scanning and rewriting
+    # the entire raw-retention window every hour. A singleton row is enough:
+    # all series advance on the same aligned clock.
+    """
+    CREATE TABLE IF NOT EXISTS climate_rollup_state (
+        singleton    INTEGER PRIMARY KEY CHECK (singleton = 1),
+        through_hour INTEGER NOT NULL
+    )
+    """,
     # Categorical state — Cielo mode, power, fan. Sampling these every minute
     # would store the same string 1,440 times a day to record two changes, so
     # they are written only when the value differs from the last one logged.
@@ -162,6 +172,12 @@ CLIMATE_SCHEMA = (
 # Raw samples are for reading a transition minute by minute; anything older than
 # this is answered from the hourly rollup, which is ~40x smaller.
 RAW_RETENTION_DAYS = 14
+
+# Rebuild the two most recently completed hours on every maintenance pass. This
+# accepts samples that arrive a little late without turning the 14-day raw
+# retention window into a 14-day rescan. The writer normally samples live on an
+# aligned clock, so two hours is deliberately generous while remaining bounded.
+CLIMATE_ROLLUP_LATE_HOURS = 2
 
 
 def init_climate(conn: sqlite3.Connection) -> None:
@@ -338,23 +354,76 @@ def roll_up_climate(now: int | None = None) -> int:
     progress would write a partial aggregate that the next run would have to
     correct, and a min/max that is wrong until the hour ends is worse than one
     that is briefly absent.
+
+    The high-water mark makes steady-state work incremental. We still rebuild a
+    small, bounded window immediately behind it so a delayed tick can correct
+    an already-written aggregate. On the first run after upgrading from a
+    version without the high-water mark, all retained raw data is folded once;
+    subsequent runs touch only that late window plus hours not yet processed.
     """
     now = int(time.time()) if now is None else int(now)
     current_hour = now - (now % 3600)
     cutoff = now - RAW_RETENTION_DAYS * 86400
     with get_conn() as conn:
-        conn.execute(
-            """
+        state = conn.execute(
+            "SELECT through_hour FROM climate_rollup_state WHERE singleton=1"
+        ).fetchone()
+        if state is None:
+            # One-time backfill/migration. Starting at the first retained row
+            # preserves existing installations that already have a fortnight
+            # of raw data when this state table first appears.
+            first = conn.execute("SELECT MIN(recorded_at) FROM climate_samples").fetchone()[0]
+            roll_from = current_hour if first is None else int(first) - (int(first) % 3600)
+        else:
+            through_hour = int(state["through_hour"])
+            # `through_hour` is exclusive. Revisit only the completed hours in
+            # the late-arrival window, then include any backlog since the last
+            # successful pass. Clamping also makes an accidentally older `now`
+            # harmless instead of moving the durable watermark backwards.
+            roll_from = max(
+                0,
+                min(through_hour, current_hour)
+                - CLIMATE_ROLLUP_LATE_HOURS * 3600,
+            )
+
+        rollup_sql = """
             INSERT INTO climate_hourly (hour, series_id, min_value, avg_value, max_value, samples)
             SELECT recorded_at - (recorded_at % 3600) AS hour,
                    series_id, MIN(value), AVG(value), MAX(value), COUNT(*)
               FROM climate_samples
-             WHERE recorded_at < ?
+             WHERE recorded_at >= ? AND recorded_at < ?
              GROUP BY hour, series_id
             ON CONFLICT(hour, series_id) DO UPDATE SET
                 min_value=excluded.min_value, avg_value=excluded.avg_value,
                 max_value=excluded.max_value, samples=excluded.samples
-            """,
+            """
+        conn.execute(rollup_sql, (roll_from, current_hour))
+
+        # A clock correction, restored database, or pre-watermark installation
+        # can leave a raw row behind the incremental window. Never prune such a
+        # row before folding it. If that hour already has a durable aggregate,
+        # however, the bounded correction window has closed: replacing a full
+        # hour with one very-late raw sample would corrupt history, so preserve
+        # the existing row. This range is normally empty and uses the
+        # recorded_at-leading primary key, so it does not reintroduce the full-
+        # retention scan that the watermark removes.
+        if cutoff < roll_from:
+            conn.execute(
+                """
+                INSERT INTO climate_hourly
+                    (hour, series_id, min_value, avg_value, max_value, samples)
+                SELECT recorded_at - (recorded_at % 3600) AS hour,
+                       series_id, MIN(value), AVG(value), MAX(value), COUNT(*)
+                  FROM climate_samples
+                 WHERE recorded_at >= ? AND recorded_at < ?
+                 GROUP BY hour, series_id
+                ON CONFLICT(hour, series_id) DO NOTHING
+                """,
+                (0, cutoff),
+            )
+        conn.execute(
+            "INSERT INTO climate_rollup_state (singleton, through_hour) VALUES (1, ?) "
+            "ON CONFLICT(singleton) DO UPDATE SET through_hour=MAX(through_hour, excluded.through_hour)",
             (current_hour,),
         )
         # Raw rows go; the rollup above has already absorbed them, and it is

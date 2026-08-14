@@ -7,6 +7,8 @@ API keys may only be authenticated once.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import json
 import os
 import time
@@ -157,6 +159,27 @@ class CieloMonitor:
         }
         if self._state:
             out.update({k: v for k, v in self._state.items() if k != "id"})
+        return out
+
+    def climate_status(self) -> dict:
+        """Public measurements plus a stable, non-identifying internal key.
+
+        The raw cloud device ID is required to keep two controllers' histories
+        separate, but it does not belong in Bask's open LAN climate API.
+        """
+        out = self.public_status()
+        device_id = self._state.get("id") if self._state else None
+        api_key = self._load().get("api_key")
+        if device_id and api_key:
+            # Key the digest with the private API key. Some controller IDs may
+            # be low-entropy identifiers; a plain hash in the open LAN API
+            # would otherwise be reversible by enumerating likely IDs.
+            digest = hmac.new(
+                str(api_key).encode("utf-8"),
+                str(device_id).encode("utf-8"),
+                hashlib.sha256,
+            ).hexdigest()[:16]
+            out["series_key"] = f"cielo-{digest}"
         return out
 
     def settings_status(self) -> dict:

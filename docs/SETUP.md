@@ -130,8 +130,11 @@ Optional next steps:
 
 ## Updating Bask
 
-Run the same installer command again. It downloads the latest code and rebuilds
-the container without replacing `~/bask/data`:
+Run the same installer command again. It stages and validates the latest code,
+creates and verifies a private settings-and-history backup, then updates the
+containers without replacing `~/bask/data`. If the new release cannot start or
+become healthy, the installer restores the previous images, configuration,
+database, and running state:
 
 ```bash
 curl -fsSL https://animalroom.app/bask/install.sh | bash
@@ -139,7 +142,7 @@ curl -fsSL https://animalroom.app/bask/install.sh | bash
 
 Use **⚙ Manage → Settings → Download backup** periodically. Technical users can
 also run `~/bask/scripts/backup.sh` for a private archive containing settings,
-SQLite history, and configured Cielo credentials.
+deployment configuration, SQLite history, and configured integration credentials.
 
 ## Troubleshooting
 

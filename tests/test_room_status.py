@@ -72,7 +72,8 @@ def assert_room_payload_allowlist() -> None:
         "data": {
             "date": "2026-08-09",
             "generatedAt": "2026-08-09T12:00:00Z",
-            "summary": {"total": 2, "completed": 1, "remaining": 1, "overdue": 0,
+            "summary": {"total": 2, "completed": 1, "refused": 0,
+                        "skipped": 0, "missed": 0, "remaining": 1, "overdue": 0,
                         "memberId": "SHED-MEMBER-SENTINEL"},
             "tasks": [{
                 "animalName": "Example Animal", "species": "Example Species",
@@ -118,6 +119,9 @@ def assert_room_payload_allowlist() -> None:
     assert dto["bask"]["room_climate"]["error"] is True
     assert set(dto["shed"]) == {"configured", "available", "last_success", "data"}
     assert set(dto["shed"]["data"]) == {"summary", "tasks", "overdue"}
+    assert set(dto["shed"]["data"]["summary"]) == {
+        "total", "completed", "refused", "skipped", "missed", "remaining", "overdue",
+    }
     assert set(dto["shed"]["data"]["tasks"][0]) == {
         "animalName", "species", "taskType", "title", "details", "dueDate",
     }
@@ -129,6 +133,32 @@ def assert_room_payload_allowlist() -> None:
     }, generated_at=10_000)
     assert malformed["shed"]["available"] is False
     assert malformed["shed"]["data"] is None, "partial Shed data must fail closed"
+
+    broken_total = bask_app._room_dashboard_dto(full_dashboard, {
+        "configured": True,
+        "available": True,
+        "last_success": 9_940,
+        "data": {
+            "summary": {"total": 2, "completed": 0, "refused": 0, "skipped": 0,
+                        "missed": 1, "remaining": 0, "overdue": 0},
+            "tasks": [], "overdue": [],
+        },
+    }, generated_at=10_000)
+    assert broken_total["shed"]["available"] is False
+    assert broken_total["shed"]["data"] is None
+
+    impossible_refusal = bask_app._room_dashboard_dto(full_dashboard, {
+        "configured": True,
+        "available": True,
+        "last_success": 9_940,
+        "data": {
+            "summary": {"total": 1, "completed": 0, "refused": 1, "skipped": 0,
+                        "missed": 1, "remaining": 0, "overdue": 0},
+            "tasks": [], "overdue": [],
+        },
+    }, generated_at=10_000)
+    assert impossible_refusal["shed"]["available"] is False
+    assert impossible_refusal["shed"]["data"] is None
 
     # Exercise the route functions as well as the pure projector. Haven must
     # use the allowlist while /api/dashboard keeps its existing full contract.
@@ -182,7 +212,8 @@ def fixture(*, shed_available=True, shed_data=True, counts=None):
             "configured": True,
             "available": shed_available,
             "last_success": 9_940,
-            "data": ({"summary": {"remaining": 3, "completed": 1, "overdue": 0, "total": 4},
+            "data": ({"summary": {"remaining": 3, "completed": 1, "refused": 0,
+                                    "skipped": 0, "missed": 0, "overdue": 0, "total": 4},
                       "tasks": [{"title": "Feed", "animalName": "Example Animal", "taskType": "feeding"}],
                       "overdue": []} if shed_data else None),
         },
@@ -204,6 +235,38 @@ def main():
     assert healthy["connection"]["label"] == "Live"
     assert healthy["carePart"] == "3 care tasks remaining"
     assert healthy["climatePart"] == "All configured climate targets look good"
+
+    all_missed = fixture()
+    all_missed["shed"]["data"] = {
+        "summary": {"total": 2, "completed": 0, "refused": 0, "skipped": 0,
+                    "missed": 2, "remaining": 0, "overdue": 0},
+        "tasks": [], "overdue": [],
+    }
+    missed_state = state(all_missed)
+    assert missed_state["carePart"] == "Today's list is settled · 2 missed"
+    missed_care = node_eval(
+        f"room.careSummaryState({json.dumps(all_missed['shed']['data']['summary'])})")
+    assert missed_care["isSettled"] is True
+    assert missed_care["isComplete"] is False
+    assert missed_care["percent"] == 0
+    assert "2 missed" in missed_care["emptyMessage"]
+    assert "complete" not in missed_care["emptyMessage"].lower()
+    missed_messages = " ".join(node_eval(f"room.buildMessages({json.dumps(all_missed)})"))
+    assert "2 missed" in missed_messages
+    assert "all checked off" not in missed_messages.lower()
+    assert "every bit of today's care is done" not in missed_messages.lower()
+
+    no_schedule = fixture()
+    no_schedule["shed"]["data"] = {
+        "summary": {"total": 0, "completed": 0, "refused": 0, "skipped": 0,
+                    "missed": 0, "remaining": 0, "overdue": 0},
+        "tasks": [], "overdue": [],
+    }
+    no_schedule_care = node_eval(
+        f"room.careSummaryState({json.dumps(no_schedule['shed']['data']['summary'])})")
+    assert no_schedule_care["percent"] is None
+    assert no_schedule_care["isComplete"] is False
+    assert state(no_schedule)["carePart"] == "No care scheduled today"
 
     cached = state(fixture(shed_available=False))
     assert cached["shedStatus"] == "stale"

@@ -9,6 +9,7 @@ config.json
 cielo-secrets.json
 vesync-secrets.json
 vesync-token.json
+alert-state.json
 readings.db*
 *.bak-*
 __pycache__

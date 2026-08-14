@@ -25,6 +25,7 @@ const settingElement = {
   dataset: { val: "10", step: "1", unit: "min" },
   querySelector: () => settingValue,
 };
+class HTMLElementMock {}
 const genericElement = {
   classList: { add() {}, remove() {}, contains() { return false; }, toggle() {} },
   style: {}, dataset: {},
@@ -38,9 +39,11 @@ const context = vm.createContext({
   document: {
     getElementById: (id) => id === "set-stale_after_minutes" ? settingElement : genericElement,
     querySelectorAll: () => [],
+    addEventListener() {},
     documentElement: genericElement,
     body: genericElement,
   },
+  HTMLElement: HTMLElementMock,
   navigator: {},
   MutationObserver: class { observe() {} disconnect() {} },
   confirm: () => true,

@@ -44,6 +44,8 @@ def main():
         "the scanner must stay root or BlueZ refuses passive scanning"
     assert "DAC_OVERRIDE" in scanner.get("cap_add", []), \
         "cap_drop ALL removes CAP_DAC_OVERRIDE, which root needs to write /data"
+    assert scanner.get("read_only") is True, \
+        "the scanner must write only through its explicit /data bind mount"
     # What compensates for that root: the scanner is unreachable from anywhere.
     assert scanner.get("network_mode") == "none"
     assert not scanner.get("ports")

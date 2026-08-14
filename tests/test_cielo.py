@@ -94,6 +94,13 @@ async def run_tests():
         public = second.public_status()
         assert "devices" not in public
         assert "selected_device_id" not in public
+        climate = second.climate_status()
+        assert climate["series_key"].startswith("cielo-")
+        assert "cc:dd" not in json.dumps(climate), "raw cloud device ID escaped"
+        first_key = climate["series_key"]
+        await second.select_device("aa:bb")
+        assert second.climate_status()["series_key"] != first_key, \
+            "two controllers would be spliced into one climate series"
         await second.clear()
         assert not second_path.exists()
         assert second.public_status()["configured"] is False

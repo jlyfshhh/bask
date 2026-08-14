@@ -84,10 +84,12 @@ curl -fsSL https://animalroom.app/bask/install.sh | bash
 ```
 
 This installs Docker when needed, enables Bluetooth passive scanning and local
-hostname discovery, and runs Bask as a restart-safe container with its settings and history in
+hostname discovery, and runs Bask as restart-safe containers with its settings and history in
 `~/bask/data`. When it finishes it prints your dashboard URL —
-`http://<hostname>.local:8080`. Run the same command again any time to update;
-the persistent data directory is never replaced.
+`http://<hostname>.local:8080`. Run the same command again any time to update.
+Updates are staged and validated first, create and verify a private config plus
+SQLite backup, and restore the prior images, configuration, database, and
+per-service running state if startup or health verification fails.
 
 New to Raspberry Pi or unsure what “open Terminal” means? The
 **[beginner's setup guide](docs/SETUP.md)** walks through the supplied-card and
@@ -129,8 +131,9 @@ Then open `http://<hostname>.local:8080` (or `http://<host-ip>:8080`) in any bro
 
 ## Updating
 
-Re-run the one-line installer. It fast-forwards the code and rebuilds the
-container while leaving `~/bask/data` untouched:
+Re-run the one-line installer. It validates the new release in a temporary Git
+worktree before touching the running service, then pulls the new image while
+leaving `~/bask/data` in place:
 
 ```bash
 curl -fsSL https://animalroom.app/bask/install.sh | bash
@@ -142,9 +145,12 @@ and by construction contains no Head Keeper record, session secret, ntfy topic,
 or integration credential. Restoring one never changes authentication: the key
 and the private topic on the machine you restore onto are kept as they are.
 
-`scripts/backup.sh` is the different thing: a private, machine-local filesystem
-backup that *does* include configuration, SQLite history, and Cielo credentials.
-Keep that one to yourself.
+Before every update, the installer uses `scripts/backup.sh` to create and verify
+a private, machine-local archive containing deployment settings, application
+configuration, SQLite history, and configured integration credentials. The
+same script can be run manually. Keep
+those archives to yourself. Storage defaults beneath `~/bask`; external mounts
+require an explicit opt-in and are never recursively re-owned by the installer.
 
 ## Configuration
 
@@ -161,7 +167,7 @@ Everything lives in the persistent `data/` directory (`config.json` plus
 
 ## Herpstat thermostats (optional)
 
-If you run [Herpstat SpyderWeb](https://www.spyderrobotics.com/) thermostats, Bask can show each unit's outputs — live probe temperature, setpoint, output %, and any alarms — in a compact strip above the enclosure grid. It reads each unit's built-in status page over your LAN; there's no cloud and nothing to install on the thermostat. **If you don't add any, the strip never appears.**
+If you run [Herpstat SpyderWeb](https://www.spyderrobotics.com/) thermostats, Bask can show each unit's outputs — live probe temperature, setpoint, output %, and any alarms — in a compact strip above the enclosure grid. It reads each unit's built-in status page over your LAN; there's no cloud and nothing to install on the thermostat. When adding one, choose the temperature unit configured on that Herpstat. This is separate from Bask's display preference and keeps the long-term climate log accurate. **If you don't add any, the strip never appears.**
 
 **1. Enable the status page on each thermostat.** Bask reads `http://<unit-ip>/RAWSTATUS`, which is off by default. In the unit's network/web settings (via its touchscreen or the Spyder app), turn on the web **status page** (sometimes labelled "web enabled" / "status"). To confirm it's on, open `http://<unit-ip>/RAWSTATUS` in a browser — you should see a page of JSON. A static IP or DHCP reservation for each unit is recommended so its address doesn't change.
 
@@ -233,7 +239,7 @@ port off the internet:
 
 What Bask does on its side:
 
-- **No account, and no cloud unless you ask for one** — it never touches a Govee account. Bluetooth is receive-only: Bask listens to the advertisements your sensors already broadcast and never connects, pairs, or advertises itself. The optional Cielo and VeSync integrations are the only parts that reach the internet, and each stores its credentials in its own `0600` file inside the private data directory ([details](#levoit-classic-300s-room-humidifier-optional)). Your `config.json` (sensor IDs + enclosure names) is git-ignored.
+- **No account, and no cloud unless you ask for one** — it never touches a Govee account. Bluetooth is receive-only: Bask listens to the advertisements your sensors already broadcast and never connects, pairs, or advertises itself. The optional Cielo, VeSync, and ntfy phone-alert integrations are the only parts that reach the internet. Their credentials or private topic stay in restrictive files inside the private data directory and are excluded from portable exports ([details](#levoit-classic-300s-room-humidifier-optional)). Your `config.json` (sensor IDs + enclosure names) is git-ignored.
 - **Same-origin only** — the API sends no permissive CORS headers, so other websites can't read it or send it cross-origin writes.
 - **Concurrent-edit safe** — every settings change is an atomic, owner-only
   file replacement guarded by a process-wide lock. The web app carries Bask's
@@ -246,7 +252,7 @@ What Bask does on its side:
   revisions return HTTP `428` and `409`, respectively.
 - **XSS-safe rendering** — all user- and device-provided strings are HTML-escaped, including BLE advertisement names (so a crafted nearby device name can't inject script).
 - **Validated input** — request payloads are length- and range-checked.
-- **Container-isolated** — Bask runs inside its own Docker container. The installer is launched as your normal user and requests `sudo` only for Docker, Bluetooth, and host-service setup. The container receives the host Bluetooth D-Bus socket it needs for scanning, but no other host directories.
+- **Separated containers, with an explicit host boundary** — the network-facing web container runs as your install UID with no Bluetooth/D-Bus mount, no Linux capabilities, and a read-only image filesystem. The scanner has no network stack or published ports and also has a read-only image filesystem, but stock BlueZ currently requires it to run as root with `CAP_DAC_OVERRIDE` and a direct host system-D-Bus socket for passive advertisement monitoring. Its only other host bind is the private `/data` directory. This is a materially smaller attack surface than giving the web service Bluetooth access, but it is not the isolation of a VM: only run images you trust and keep the Pi and Docker host updated.
 
 ## ⚠️ Husbandry disclaimer
 
