@@ -423,19 +423,54 @@ function renderStatusBanner(data) {
     return;
   }
 
+  // One chip per enclosure rather than a run-on sentence.
+  //
+  // The old banner concatenated every problem into a single red paragraph, so
+  // six marginal humidity readings looked identical to an animal in real
+  // trouble, and the only way to read it was to parse a wall of text broken by
+  // interpuncts. Chips are scannable, carry their own severity, and each one
+  // is a tap to the enclosure it names.
   const anyDanger = problems.some(e => e.status === "danger");
   el.className = "status-banner " + (anyDanger ? "danger" : "warn");
-  const descs = problems.map(e => {
-    if (e.status === "stale") return `${esc(e.name)}: no signal`;
-    const issues = [];
-    if (e.warm_temp_ok === false) issues.push("warm");
-    if (e.cool_temp_ok === false) issues.push("cool");
-    if (e.humidity_ok === false) issues.push("humidity");
-    return `${esc(e.name)}: ${issues.join(" + ") || "out of range"}`;
-  });
-  el.innerHTML = `<span class="sb-icon">⚠</span>
-    <span class="sb-text">Check ${problems.length}</span>
-    <span class="sb-sub">${descs.join("  ·  ")}</span>${battNote}`;
+
+  const rank = { danger: 0, warning: 1, stale: 2 };
+  const chips = [...problems]
+    .sort((a, b) => (rank[a.status] ?? 3) - (rank[b.status] ?? 3))
+    .map(e => {
+      let why;
+      if (e.status === "stale") {
+        why = "no signal";
+      } else {
+        const issues = [];
+        if (e.warm_temp_ok === false) issues.push("warm");
+        if (e.cool_temp_ok === false) issues.push("cool");
+        if (e.humidity_ok === false) issues.push("humidity");
+        why = issues.join(" · ") || "out of range";
+      }
+      return `<button type="button" class="sb-chip ${e.status}"
+                onclick="openDetail('${idAttr(e.id)}')"
+                aria-label="${esc(e.name)}: ${esc(why)}">
+        <span class="sbc-name">${esc(e.name)}</span>
+        <span class="sbc-why">${esc(why)}</span>
+      </button>`;
+    });
+
+  // Counted separately so "two need attention" is not buried among six that
+  // are merely drifting.
+  const danger = problems.filter(e => e.status === "danger").length;
+  const rest = problems.length - danger;
+  const summary = danger && rest ? `${danger} out of range · ${rest} drifting`
+    : danger ? `${danger} out of range`
+    : `${rest} drifting`;
+
+  el.innerHTML = `
+    <div class="sb-head">
+      <span class="sb-icon">${anyDanger ? "⚠" : "•"}</span>
+      <span class="sb-text">Check ${problems.length}</span>
+      <span class="sb-sub">${summary}</span>
+      ${battNote}
+    </div>
+    <div class="sb-chips">${chips.join("")}</div>`;
 }
 
 // Day/night indicator — shows which range set is currently being applied.

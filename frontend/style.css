@@ -240,50 +240,70 @@ body {
 /* ── At-a-glance room status banner (readable across the room) ── */
 .status-banner {
   flex-shrink: 0;
-  display: flex; align-items: center; gap: 16px;
-  padding: 12px 24px;
+  padding: 12px 18px 14px;
   border-bottom: 1px solid var(--border);
+}
+.status-banner .sb-head {
+  display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
   font-weight: 800;
 }
-.status-banner .sb-icon { font-size: 2.6rem; line-height: 1; }
+.status-banner .sb-icon { font-size: 1.5rem; line-height: 1; }
 .status-banner .sb-text {
-  font-size: 2.4rem; line-height: 1; letter-spacing: 0.02em; text-transform: uppercase;
+  font-size: 1.5rem; line-height: 1.1; letter-spacing: -0.01em;
 }
 .status-banner .sb-sub {
-  font-size: 1.15rem; font-weight: 700; margin-left: auto; text-align: right;
-  opacity: 0.92; max-width: 60%;
+  font-size: 0.85rem; font-weight: 700; opacity: 0.85;
 }
 .status-banner .sb-batt {
-  font-size: 1rem; font-weight: 700; color: var(--warning);
-  margin-left: 18px; white-space: nowrap;
+  font-size: 0.85rem; font-weight: 700; color: var(--warning);
+  margin-left: auto; white-space: nowrap;
 }
+
+/* One chip per enclosure: scannable, individually severity-coded, and each a
+   tap through to the animal it names. */
+.sb-chips { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+.sb-chip {
+  appearance: none; cursor: pointer; text-align: left;
+  display: flex; flex-direction: column; gap: 1px;
+  padding: 6px 11px; border-radius: 11px;
+  border: 1px solid var(--border); background: var(--surface2);
+  color: var(--text); font: inherit;
+}
+.sb-chip:active { transform: scale(0.98); }
+.sb-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sbc-name { font-size: 0.88rem; font-weight: 800; line-height: 1.15; }
+.sbc-why { font-size: 0.72rem; font-weight: 600; color: var(--muted); }
+.sb-chip.danger  { border-color: var(--danger-border); background: var(--danger-bg); }
+.sb-chip.danger  .sbc-name { color: var(--danger); }
+.sb-chip.warning { border-color: var(--warning-border); background: var(--warning-bg); }
+.sb-chip.warning .sbc-name { color: var(--warning); }
+.sb-chip.stale   { opacity: 0.7; }
+
+/* Tinted surfaces rather than saturated slabs. The banner is the loudest thing
+   on the screen and it is on-screen constantly; a wall of red that never goes
+   away is a wall of red you stop seeing. */
 .status-banner.good {
-  background: rgba(47,191,91,0.14); color: var(--ok);
-  border-bottom: 2px solid var(--ok-border);
+  background: var(--ok-bg); color: var(--ok);
+  border-bottom: 1px solid var(--ok-border);
 }
 .status-banner.warn {
-  background: rgba(242,165,22,0.16); color: var(--warning);
-  border-bottom: 2px solid var(--warning-border);
+  background: var(--warning-bg); color: var(--warning);
+  border-bottom: 1px solid var(--warning-border);
 }
 .status-banner.danger {
-  background: rgba(240,70,63,0.18); color: var(--danger);
-  border-bottom: 2px solid var(--danger);
-  animation: bannerpulse 1.3s ease-in-out infinite;
+  background: var(--danger-bg); color: var(--danger);
+  border-bottom: 1px solid var(--danger-border);
 }
 .status-banner.idle { background: var(--surface); color: var(--muted); }
-.status-banner.idle .sb-text { font-size: 1.4rem; text-transform: none; font-weight: 700; }
-@keyframes bannerpulse {
-  0%,100% { box-shadow: inset 0 0 0 0 rgba(240,70,63,0); }
-  50%     { box-shadow: inset 0 0 60px 0 rgba(240,70,63,0.28); }
-}
+.status-banner.idle .sb-text { font-size: 1.2rem; font-weight: 700; }
 
 /* ── Dashboard grid ──────────────────────────────────────── */
 #grid {
   flex: 1;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
-  gap: 16px;
-  padding: 18px;
+  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  gap: 12px;
+  padding: 14px;
   overflow-y: auto;
   align-content: start;
 }
@@ -298,7 +318,7 @@ body {
   box-shadow: var(--shadow);
   /* The grid squeezes cards to fit without scrolling. Past this point a
      card is unreadable, so let the grid scroll instead of clipping. */
-  min-height: 150px;
+  min-height: 118px;
   overflow: hidden;
   cursor: pointer;
   transition: border-color .25s, background .25s, transform .08s;
@@ -328,12 +348,12 @@ body {
 /* Card header */
 .enc-head {
   display: flex; align-items: center; gap: 12px;
-  padding: 14px 16px 10px;
+  padding: 12px 14px 8px;
 }
 .enc-title { display: block; flex: 1; min-width: 0; }
 .enc-name {
   display: block;
-  font-size: 1.4rem; font-weight: 800; line-height: 1.05;
+  font-size: 1.15rem; font-weight: 800; line-height: 1.05;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .enc-species { display: block; font-size: 0.8rem; color: var(--muted); margin-top: 3px; }
@@ -359,19 +379,19 @@ body {
 .enc-body { display: flex; border-top: 1px solid var(--border); margin-top: auto; }
 .metric {
   flex: 1; min-width: 0; overflow: hidden;
-  text-align: center; padding: 16px 6px 18px;
+  text-align: center; padding: 11px 6px 12px;
 }
 .metric + .metric { border-left: 1px solid var(--border); }
 .metric.mid { background: rgba(255,255,255,0.015); }
 .metric-label {
   display: block;
-  font-size: 0.7rem; font-weight: 800; text-transform: uppercase;
-  letter-spacing: 0.09em; color: var(--muted); margin-bottom: 8px;
+  font-size: 0.64rem; font-weight: 800; text-transform: uppercase;
+  letter-spacing: 0.09em; color: var(--muted); margin-bottom: 5px;
 }
 .metric-value {
   display: block;
-  font-size: 2.2rem;                          /* fallback for browsers without container queries */
-  font-size: clamp(1.5rem, 11cqi, 2.7rem);    /* scales to the card width where supported */
+  font-size: 1.7rem;                          /* fallback without container queries */
+  font-size: clamp(1.25rem, 8.5cqi, 2rem);    /* scales to the card width where supported */
   font-weight: 800; line-height: 0.95; white-space: nowrap;
   letter-spacing: -0.02em; font-variant-numeric: tabular-nums;
 }
