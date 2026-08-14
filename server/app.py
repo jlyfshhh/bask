@@ -998,11 +998,18 @@ def _build_dashboard(cfg):
         for slot in enc.get("sensors", []):
             grouped.add(slot["mac"].upper())
 
-    ungrouped = [
-        {**build_sensor_reading(s["mac"], readings_by_mac, sensor_defs, unit, stale_cutoff, now, low_batt),
-         "species": s.get("species")}
-        for s in cfg["sensors"] if s["mac"].upper() not in grouped
-    ]
+    def reading_for(sensor):
+        return {**build_sensor_reading(sensor["mac"], readings_by_mac, sensor_defs, unit,
+                                       stale_cutoff, now, low_batt),
+                "species": sensor.get("species")}
+
+    loose = [s for s in cfg["sensors"] if s["mac"].upper() not in grouped]
+    # An outdoor sensor is reference, not a habitat. Kept out of `ungrouped` so
+    # it stops rendering as a card among the enclosures — buried under sixteen
+    # of them it may as well not exist, and it is the one reading that explains
+    # what the others are fighting against.
+    outdoor = [reading_for(s) for s in loose if s.get("role") == "outdoor"]
+    ungrouped = [reading_for(s) for s in loose if s.get("role") != "outdoor"]
 
     counts = {"ok": 0, "warning": 0, "danger": 0, "stale": 0, "no_data": 0, "no_ranges": 0}
     for e in enclosures_out:
@@ -1011,6 +1018,7 @@ def _build_dashboard(cfg):
                    for t in cfg.get("thermostats", [])
                    if t.get("ip") in _thermostats]
     return {"enclosures": enclosures_out, "ungrouped": ungrouped,
+            "outdoor": outdoor,
             "counts": counts, "temp_unit": unit, "updated_at": now,
             "period": "day" if is_day else "night",
             "day_start_hour": cfg["settings"]["day_start_hour"],

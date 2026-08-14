@@ -289,6 +289,7 @@ async function refreshDashboard() {
     renderPeriod(data);
     renderRoomClimate(data.room_climate);
     renderHumidifier(data.humidifier);
+    renderOutdoor(data);
     renderThermostats(data);
     renderGrid(data);
     const t = new Date(data.updated_at * 1000);
@@ -320,6 +321,37 @@ function renderRoomClimate(climate) {
     <span class="rc-reading">${temp}<small>${humidity}</small></span>
     <span class="rc-state">${esc(state)}</span>`;
   el.title = "Cielo Breez room climate — tap to manage";
+}
+
+// Outdoor reference reading. Not a habitat and never judged against a range —
+// it is the number that explains what the room is fighting. The difference is
+// shown alongside it because that gap, not the absolute, is what predicts
+// whether the mini-split can hold its setpoint tonight.
+function renderOutdoor(data) {
+  const el = document.getElementById("room-outdoor");
+  if (!el) return;
+  const reading = (data.outdoor || [])[0];
+  if (!reading || reading.temp == null) { el.style.display = "none"; return; }
+  el.style.display = "grid";
+  el.className = "room-climate outdoor" + (reading.stale ? " unavailable" : "");
+
+  const u = "°" + _tempUnit;
+  const humidity = reading.humidity == null ? "" : `${reading.humidity}%`;
+  // Compare against the mini-split's own thermometer when there is one, since
+  // that is the sensor the unit actually acts on.
+  const inside = data.room_climate?.configured && data.room_climate.temperature != null
+    ? data.room_climate.temperature : null;
+  let gap = "";
+  if (inside != null && !reading.stale) {
+    const delta = Math.round((reading.temp - inside) * 10) / 10;
+    gap = delta === 0 ? "same as inside"
+      : `${Math.abs(delta)}${u} ${delta > 0 ? "warmer" : "colder"} out`;
+  }
+  el.innerHTML = `
+    <span class="rc-label">${esc(reading.name || "Outside")}</span>
+    <span class="rc-reading">${reading.temp}${u}<small>${humidity}</small></span>
+    <span class="rc-state">${esc(reading.stale ? fmtAge(reading.age_seconds) : gap)}</span>`;
+  el.title = "Outdoor reference sensor";
 }
 
 // Read-only Levoit/VeSync humidifier card. Low water gets an explicit warning;
@@ -422,30 +454,82 @@ function renderPeriod(data) {
   el.title = isDay ? `Day ranges (${win})` : `Night ranges (outside ${win})`;
 }
 
-// Compact Herpstat thermostat strip: live probe temp → setpoint, output %, alarms.
+// Herpstat outputs, laid out as a grid rather than a single scrolling row.
+//
+// A twelve-output rack in one horizontal strip means the eleventh and twelfth
+// are never looked at, which defeats the purpose of showing them at all. Each
+// output gets a tile with the three numbers that matter — where the probe is,
+// where it is aiming, and how hard it is working — and the power level is drawn
+// as a bar because "is this element straining" is a shape, not a figure to read.
 function renderThermostats(data) {
   const el = document.getElementById("thermostat-strip");
   if (!el) return;
   const units = data.thermostats || [];
   if (!units.length) { el.style.display = "none"; return; }
-  el.style.display = "flex";
+  el.style.display = "block";
   const u = "°" + _tempUnit;
-  const chips = [];
+  const tiles = [];
+  let heating = 0;
+  let total = 0;
+
   for (const unit of units) {
     if (!unit.reachable) {
-      chips.push(`<div class="tchip offline"><span class="tc-name">${esc(unit.name)}</span>` +
-                 `<span class="tc-sub">offline</span></div>`);
+      tiles.push(`<div class="tstat offline">
+        <span class="ts-name">${esc(unit.name)}</span>
+        <span class="ts-temp">—</span>
+        <span class="ts-sub">unreachable</span></div>`);
       continue;
     }
     for (const o of unit.outputs) {
-      chips.push(`<div class="tchip ${o.alarm ? "alarm" : "ok"}">
-        <span class="tc-name">${esc(o.name)}</span>
-        <span class="tc-temp">${num(o.temp)}${u}</span>
-        <span class="tc-sub">→ ${num(o.setpoint)}${u} · ${num(o.output_pct, "0")}%${o.heating ? " 🔥" : ""}${o.error ? " · " + esc(o.error) : ""}</span>
+      total += 1;
+      if (o.heating) heating += 1;
+      const pct = Math.max(0, Math.min(100, Number(o.output_pct) || 0));
+      const state = o.alarm ? "alarm" : o.heating ? "heating" : "idle";
+      tiles.push(`<div class="tstat ${state}">
+        <span class="ts-name">${esc(o.name)}</span>
+        <span class="ts-temp">${num(o.temp)}<small>${u}</small></span>
+        <span class="ts-sub">aiming ${num(o.setpoint)}${u}${o.error ? " · " + esc(o.error) : ""}</span>
+        <span class="ts-bar" role="img" aria-label="output ${pct} percent">
+          <span class="ts-fill" style="width:${pct}%"></span></span>
+        <span class="ts-pct">${pct}%</span>
       </div>`);
     }
   }
-  el.innerHTML = `<span class="tstat-label">Thermostats</span>${chips.join("")}`;
+
+  const summary = total
+    ? `${heating} of ${total} heating`
+    : "no outputs";
+  el.innerHTML = `
+    <button type="button" class="tstat-head" onclick="toggleThermostats()"
+            aria-expanded="true" aria-controls="tstat-grid">
+      <span class="tstat-label">Thermostats</span>
+      <span class="tstat-summary">${summary}</span>
+      <span class="tstat-caret" aria-hidden="true">▾</span>
+    </button>
+    <div class="tstat-grid" id="tstat-grid">${tiles.join("")}</div>`;
+  if (_thermostatsCollapsed) el.classList.add("collapsed");
+}
+
+// Collapsible because twelve tiles is a lot of screen on a phone when the
+// answer is "they are all fine". The preference sticks so the choice is made
+// once rather than on every glance.
+// Read defensively: this runs at module scope, and localStorage throws rather
+// than returning null in a restricted context (private browsing, an embedded
+// webview with storage disabled). An exception here would take the whole
+// dashboard down to remember whether a panel was folded.
+let _thermostatsCollapsed = (() => {
+  try { return localStorage.getItem("bask.tstats.collapsed") === "1"; }
+  catch (e) { return false; }
+})();
+
+function toggleThermostats() {
+  const el = document.getElementById("thermostat-strip");
+  if (!el) return;
+  _thermostatsCollapsed = !_thermostatsCollapsed;
+  el.classList.toggle("collapsed", _thermostatsCollapsed);
+  const head = el.querySelector(".tstat-head");
+  if (head) head.setAttribute("aria-expanded", String(!_thermostatsCollapsed));
+  try { localStorage.setItem("bask.tstats.collapsed", _thermostatsCollapsed ? "1" : "0"); } catch (e) {}
 }
 
 function renderGrid(data) {
