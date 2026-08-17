@@ -68,7 +68,7 @@ Two processes share one SQLite file so they never contend for the Bluetooth radi
 
 Bask is hardware-agnostic — adapt it to whatever you have:
 
-- **Any current Raspberry Pi running 64-bit Raspberry Pi OS.** A **Pi 4** or **Pi 3B+** is the easy, widely-available pick; a **Pi Zero 2 W** is the most compact and lowest-power; a **Pi 5** works too. Many Pi kits already include a prepared OS card. *(The original ARMv6 Pi Zero W / Pi 1 are too slow and are not supported.)* Any other 64-bit Debian machine with a BLE adapter can work too, and macOS works for development.
+- **Any current Raspberry Pi running 64-bit Raspberry Pi OS — Lite is recommended.** Bask needs about 240 MB free across its two containers, so a **Pi Zero 2 W** is enough for Bask on its own; a **Pi 4** or **Pi 5** gives room to add Shed later. Many Pi kits already include a prepared OS card. *(The original ARMv6 Pi Zero W / Pi 1 are too slow and are not supported.)* Any other 64-bit Debian or Ubuntu machine with a BLE adapter works too, and macOS works for development. Bluetooth scanning needs Linux — the scanner talks to BlueZ, so Windows is not supported.
 - **One or more Govee H5075** sensors (other Govee BLE thermo-hygrometers that broadcast readings may also work).
 - **A display** — an old tablet or phone, a monitor on the host, a smart display, or just any browser on your network.
 
