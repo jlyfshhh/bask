@@ -323,6 +323,13 @@ def _parse_herpstat(ip: str, raw: dict, name_override, temp_unit: str = "F") -> 
 # Smoothing over the last minute keeps the number honest in both directions.
 # An output genuinely stuck at zero stays at zero; one that is modulating stops
 # flickering between extremes and reads as the duty cycle it actually is.
+from .humidity_window import HumidityWindow
+
+# Humidity is cyclic by nature — foggers, mistings, a lid opening — so it is
+# judged over a window rather than on the last reading. Temperature is not:
+# a failed heat source is an emergency and must not wait out a window.
+_humidity_window = HumidityWindow()
+
 OUTPUT_SMOOTHING = 6          # polls, at HERPSTAT_POLL seconds each
 _output_history: dict[str, list[float]] = {}
 
@@ -492,6 +499,9 @@ def _collect_climate(cfg: dict) -> tuple[list[dict], list[dict]]:
                         "value": r.get("temp_c"), "label": label})
         samples.append({"source": source, "series": mac, "metric": "humidity",
                         "value": r.get("humidity"), "label": label})
+        # Same fixed clock the log runs on, so the window is a real duration and
+        # not a function of how often someone refreshes the dashboard.
+        _humidity_window.record(mac, r.get("humidity"), time.time())
         # Battery and signal explain the gaps. When a series stops, the next
         # question is always "did it die or did it move out of range", and
         # without these the log cannot answer it — the porch sensor cost an
@@ -1010,6 +1020,7 @@ def analyze_enclosure(enc_cfg, readings_by_mac, sensor_defs, unit, stale_cutoff,
 
     violations = 0
     warm_temp_ok = cool_temp_ok = humidity_ok = True
+    humidity_out_fraction, humidity_samples = 0.0, 0
     has_ranges = False
     if sp:
         wt_lo, wt_hi, ct_lo, ct_hi, hm_lo, hm_hi = species_ranges(sp, is_day)
@@ -1023,7 +1034,8 @@ def analyze_enclosure(enc_cfg, readings_by_mac, sensor_defs, unit, stale_cutoff,
             if not cool_temp_ok:
                 violations += 1
         if cool and not cool["stale"] and cool["humidity"] is not None:
-            humidity_ok = _check(cool["humidity"], hm_lo, hm_hi)
+            humidity_ok, humidity_out_fraction, humidity_samples = _humidity_window.evaluate(
+                (cool.get("mac") or "").upper(), cool["humidity"], hm_lo, hm_hi, time.time())
             if not humidity_ok:
                 violations += 1
 
@@ -1049,7 +1061,10 @@ def analyze_enclosure(enc_cfg, readings_by_mac, sensor_defs, unit, stale_cutoff,
         "species_name": sp["name"] if sp else enc_cfg.get("species"),
         "species_id": enc_cfg.get("species_id"), "has_ranges": has_ranges, "status": status,
         "violations": violations, "warm_temp_ok": warm_temp_ok, "cool_temp_ok": cool_temp_ok,
-        "humidity_ok": humidity_ok, "low_battery": low_battery,
+        "humidity_ok": humidity_ok,
+        "humidity_out_fraction": round(humidity_out_fraction, 3),
+        "humidity_window_samples": humidity_samples,
+        "low_battery": low_battery,
         "age_seconds": max(ages) if ages else None,
         "warm": warm, "cool": cool, "sensors": sensors,
     }
@@ -1612,6 +1627,10 @@ def unpair_sensor(payload: PairPayload, _: None = Keeper, revision: int = Config
                                 if slot["mac"].upper() != mac]
 
     mutate_config(revision, unpair)
+    # A slot re-paired to a different animal must not inherit the previous
+    # occupant's humidity history, which would judge it against a window it was
+    # never in.
+    _humidity_window.forget(mac)
     return {"ok": True}
 
 
