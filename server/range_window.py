@@ -1,4 +1,4 @@
-"""Judge humidity on how long it has been wrong, not on the last reading.
+"""Judge a reading on how long it has been wrong, not on its last value.
 
 Every humidity source in a keeper's room is cyclic. A fogger runs for two
 minutes and the enclosure sits above target for twenty; a misting spikes a
@@ -10,17 +10,24 @@ not likely to be harmful."
 
 So humidity alerts on the fraction of a recent window spent out of range.
 
-Temperature deliberately does *not* use this. A heat source that fails is an
-emergency, and delaying that alert by hours to smooth out a transient would
-trade a nuisance for a risk to the animal. Cycling is normal for humidity and
-abnormal for a thermostat.
+Temperature uses a shorter window than humidity. Humidity cycles on the period
+of a fogger or a misting — tens of minutes — while a temperature swing is
+usually a lamp ramping or a door opening, over in a few. An hour is enough to
+absorb those and short enough that a genuine heating fault is still reported
+promptly.
+
+Note this counts *time out of range* rather than averaging. An average lets a
+hot excursion cancel against a cold one: half an hour at 95F and half at 75F
+averages to a comfortable 85F, while the animal actually spent half an hour at
+95F. Counting time cannot hide that.
 """
 
 from collections import deque
 
 # Long enough that a fogger or misting cycle is a small part of it, short
 # enough that a genuine failure is reported the same evening.
-WINDOW_SECONDS = 3 * 3600
+HUMIDITY_WINDOW_SECONDS = 3 * 3600
+TEMPERATURE_WINDOW_SECONDS = 3600
 # Alert once the majority of the window is out of range. A reading that is
 # wrong half the time is a cycle; wrong nearly all the time is a shortfall.
 MAX_OUT_OF_RANGE = 0.5
@@ -29,18 +36,18 @@ MAX_OUT_OF_RANGE = 0.5
 MIN_SAMPLES = 20
 
 
-class HumidityWindow:
-    """Per-sensor ring of recent (timestamp, humidity) readings."""
+class RangeWindow:
+    """Per-sensor ring of recent (timestamp, value) readings."""
 
-    def __init__(self, window_seconds: int = WINDOW_SECONDS):
+    def __init__(self, window_seconds: int = HUMIDITY_WINDOW_SECONDS):
         self._window = window_seconds
         self._by_mac: dict[str, deque] = {}
 
-    def record(self, mac: str, humidity: float | None, now: float) -> None:
-        if humidity is None:
+    def record(self, mac: str, value: float | None, now: float) -> None:
+        if value is None:
             return
         samples = self._by_mac.setdefault(mac, deque())
-        samples.append((now, float(humidity)))
+        samples.append((now, float(value)))
         cutoff = now - self._window
         while samples and samples[0][0] < cutoff:
             samples.popleft()

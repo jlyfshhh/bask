@@ -53,7 +53,7 @@ jobs:
           PYTHONPATH="$PWD:$PWD/scanner" python tests/test_hostile_advert.py
           PYTHONPATH="$PWD:$PWD/scanner" python tests/test_scanner_limits.py
           PYTHONPATH="$PWD:$PWD/scanner" python tests/test_room_status.py
-          PYTHONPATH="$PWD:$PWD/scanner" python tests/test_humidity_window.py
+          PYTHONPATH="$PWD:$PWD/scanner" python tests/test_range_window.py
           PYTHONPATH="$PWD:$PWD/scanner" python tests/test_container_boundary.py
           PYTHONPATH="$PWD:$PWD/scanner" python tests/test_climate_log.py
           PYTHONPATH="$PWD:$PWD/scanner" python tests/test_thermostat_units.py

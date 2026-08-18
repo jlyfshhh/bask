@@ -323,12 +323,15 @@ def _parse_herpstat(ip: str, raw: dict, name_override, temp_unit: str = "F") -> 
 # Smoothing over the last minute keeps the number honest in both directions.
 # An output genuinely stuck at zero stays at zero; one that is modulating stops
 # flickering between extremes and reads as the duty cycle it actually is.
-from .humidity_window import HumidityWindow
+from .range_window import RangeWindow, HUMIDITY_WINDOW_SECONDS, TEMPERATURE_WINDOW_SECONDS
 
-# Humidity is cyclic by nature — foggers, mistings, a lid opening — so it is
-# judged over a window rather than on the last reading. Temperature is not:
-# a failed heat source is an emergency and must not wait out a window.
-_humidity_window = HumidityWindow()
+# Both are judged over a window of time spent out of range rather than on the
+# last reading, because a single sample answers "what was it the instant I
+# looked" and every source in this room cycles. Humidity gets the longer window:
+# it cycles on the period of a fogger or misting, while a temperature swing is
+# usually a lamp ramping or a door opening and is over in minutes.
+_humidity_window = RangeWindow(HUMIDITY_WINDOW_SECONDS)
+_temp_window = RangeWindow(TEMPERATURE_WINDOW_SECONDS)
 
 OUTPUT_SMOOTHING = 6          # polls, at HERPSTAT_POLL seconds each
 _output_history: dict[str, list[float]] = {}
@@ -501,7 +504,9 @@ def _collect_climate(cfg: dict) -> tuple[list[dict], list[dict]]:
                         "value": r.get("humidity"), "label": label})
         # Same fixed clock the log runs on, so the window is a real duration and
         # not a function of how often someone refreshes the dashboard.
-        _humidity_window.record(mac, r.get("humidity"), time.time())
+        _now = time.time()
+        _humidity_window.record(mac, r.get("humidity"), _now)
+        _temp_window.record(mac, r.get("temp_c"), _now)
         # Battery and signal explain the gaps. When a series stops, the next
         # question is always "did it die or did it move out of range", and
         # without these the log cannot answer it — the porch sensor cost an
@@ -1021,16 +1026,25 @@ def analyze_enclosure(enc_cfg, readings_by_mac, sensor_defs, unit, stale_cutoff,
     violations = 0
     warm_temp_ok = cool_temp_ok = humidity_ok = True
     humidity_out_fraction, humidity_samples = 0.0, 0
+    warm_out_fraction = cool_out_fraction = 0.0
     has_ranges = False
     if sp:
         wt_lo, wt_hi, ct_lo, ct_hi, hm_lo, hm_hi = species_ranges(sp, is_day)
         has_ranges = any(v is not None for v in [wt_lo, wt_hi, ct_lo, ct_hi, hm_lo, hm_hi])
+        _now = time.time()
         if warm and not warm["stale"] and warm["temp"] is not None:
-            warm_temp_ok = _check(warm["temp"], wt_lo, wt_hi)
+            # The window stores Celsius as the scanner reports it, while the
+            # reading here is already in the keeper's display unit. Convert the
+            # reading rather than the samples so one unit governs the whole test.
+            warm_temp_ok, warm_out_fraction, _n = _temp_window.evaluate(
+                (warm.get("mac") or "").upper(), _to_c(warm["temp"], unit),
+                _to_c(wt_lo, unit), _to_c(wt_hi, unit), _now)
             if not warm_temp_ok:
                 violations += 1
         if cool and not cool["stale"] and cool["temp"] is not None:
-            cool_temp_ok = _check(cool["temp"], ct_lo, ct_hi)
+            cool_temp_ok, cool_out_fraction, _n = _temp_window.evaluate(
+                (cool.get("mac") or "").upper(), _to_c(cool["temp"], unit),
+                _to_c(ct_lo, unit), _to_c(ct_hi, unit), _now)
             if not cool_temp_ok:
                 violations += 1
         if cool and not cool["stale"] and cool["humidity"] is not None:
@@ -1063,6 +1077,8 @@ def analyze_enclosure(enc_cfg, readings_by_mac, sensor_defs, unit, stale_cutoff,
         "violations": violations, "warm_temp_ok": warm_temp_ok, "cool_temp_ok": cool_temp_ok,
         "humidity_ok": humidity_ok,
         "humidity_out_fraction": round(humidity_out_fraction, 3),
+        "warm_out_fraction": round(warm_out_fraction, 3),
+        "cool_out_fraction": round(cool_out_fraction, 3),
         "humidity_window_samples": humidity_samples,
         "low_battery": low_battery,
         "age_seconds": max(ages) if ages else None,
@@ -1631,6 +1647,7 @@ def unpair_sensor(payload: PairPayload, _: None = Keeper, revision: int = Config
     # occupant's humidity history, which would judge it against a window it was
     # never in.
     _humidity_window.forget(mac)
+    _temp_window.forget(mac)
     return {"ok": True}
 
 
