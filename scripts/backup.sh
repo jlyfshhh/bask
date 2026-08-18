@@ -90,6 +90,20 @@ resolve_path() {
 }
 
 data_dir="$(resolve_path BASK_DATA_PATH "$data_setting" false)"
+
+# Check containment against the *intended* backup path before resolve_path is
+# allowed to create it. Resolving with create=true makes the directory first,
+# so rejecting afterwards still left a backups/ folder inside the data
+# directory — which the next run would then sweep into its own archive.
+case "$backup_setting" in
+  /*) backup_candidate="$backup_setting" ;;
+  *) backup_candidate="$root/${backup_setting#./}" ;;
+esac
+while [[ "$backup_candidate" == */ ]]; do backup_candidate="${backup_candidate%/}"; done
+case "$backup_candidate/" in "$data_dir/"*)
+  echo "Bask data and backup paths cannot contain one another." >&2; exit 1 ;;
+esac
+
 backup_dir="$(resolve_path BASK_BACKUP_PATH "$backup_setting" true)"
 case "$data_dir/" in "$backup_dir/"*) echo "Bask data and backup paths cannot contain one another." >&2; exit 1 ;; esac
 case "$backup_dir/" in "$data_dir/"*) echo "Bask data and backup paths cannot contain one another." >&2; exit 1 ;; esac
