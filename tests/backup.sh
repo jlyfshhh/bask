@@ -36,7 +36,11 @@ archive_one="$(run_backup "$install")"
 archive_two="$(run_backup "$install")"
 [[ "$archive_one" != "$archive_two" ]]
 for archive in "$archive_one" "$archive_two"; do
-  [[ -f "$archive" && "$(stat -f '%Lp' "$archive" 2>/dev/null || stat -c '%a' "$archive")" == 600 ]]
+  # GNU first, BSD second — and the order matters. `stat -f` on Linux means
+  # "filesystem status", so it *succeeds* and prints block counts instead of
+  # failing over to the GNU form. `stat -c` genuinely fails on BSD, so trying it
+  # first is the only ordering that works on both.
+  [[ -f "$archive" && "$(stat -c '%a' "$archive" 2>/dev/null || stat -f '%Lp' "$archive")" == 600 ]]
   tar -tzf "$archive" >/dev/null
 done
 
