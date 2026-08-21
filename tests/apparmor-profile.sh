@@ -39,14 +39,24 @@ if [[ ! -S /var/run/dbus/system_bus_socket ]]; then
   exit 0
 fi
 
+# Build the probe once, with network, so the probes themselves can run without
+# one. D-Bus travels over the mounted socket, so network mode is irrelevant to
+# what is being measured — but apt is not, and installing inside a --network
+# none container is how the first version of this test failed for a reason that
+# had nothing to do with AppArmor.
+probe_image="bask-apparmor-probe:test"
+if ! docker image inspect "$probe_image" >/dev/null 2>&1; then
+  printf 'FROM debian:stable-slim\nRUN apt-get update -qq && apt-get install -y -qq dbus && rm -rf /var/lib/apt/lists/*\n' \
+    | docker build -q -t "$probe_image" - >/dev/null
+fi
+
 probe() {
   docker run --rm --security-opt "apparmor=$1" --network none \
     -v /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket:ro \
     -e DBUS_SYSTEM_BUS_ADDRESS=unix:path=/var/run/dbus/system_bus_socket \
-    debian:stable-slim sh -c \
-    'apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq dbus >/dev/null 2>&1
-     dbus-send --system --dest=org.freedesktop.DBus --print-reply \
-       /org/freedesktop/DBus org.freedesktop.DBus.ListNames' 2>&1
+    "$probe_image" \
+    dbus-send --system --dest=org.freedesktop.DBus --print-reply \
+      /org/freedesktop/DBus org.freedesktop.DBus.ListNames 2>&1
 }
 
 # The call in the report a keeper sent was AddMatch against the bus driver, and
