@@ -230,6 +230,29 @@ candidate_compose() {
   compose_with "$runtime/.env" "$runtime/compose.yaml" "$@"
 }
 
+# Validation only. compose.yaml carries `env_file: .env`, and Compose resolves
+# that against --project-directory rather than against the file it appears in.
+# compose_with anchors the project at the install root, which is right for `up`
+# — relative bind mounts must land there — but wrong for validating a staged
+# candidate on a first install, where the install root has no .env yet: it is
+# written there only after validation passes. So the check failed with "env file
+# .../.env not found" for every keeper installing fresh. Validate the staged
+# bundle where it sits, beside its own .env.
+validate_candidate_compose() {
+  (
+    cd "$runtime"
+    env \
+      -u BASK_PORT -u BASK_TAG -u BASK_DATA_PATH -u BASK_BACKUP_PATH \
+      -u BASK_IMAGE -u BASK_ALLOW_EXTERNAL_PATHS -u BASK_BIND_ADDRESS \
+      -u BASK_UID -u BASK_GID -u BASK_WEB_MEMORY_LIMIT \
+      -u BASK_SCANNER_MEMORY_LIMIT -u SHED_DISPLAY_URL \
+      -u SHED_DISPLAY_TOKEN -u COMPOSE_FILE -u COMPOSE_PROJECT_NAME \
+      -u COMPOSE_PROFILES -u DOCKER_CONTEXT -u DOCKER_HOST \
+      docker compose --project-directory "$runtime" \
+        --env-file "$runtime/.env" -f "$runtime/compose.yaml" config --quiet
+  )
+}
+
 if [[ "$previous_runtime" == true ]] && ! previous_compose config --quiet; then
   die "The prior Bask Compose configuration is invalid, so an exact rollback cannot be guaranteed. Repair $project_dir/compose.yaml before updating."
 fi
@@ -533,7 +556,7 @@ verify_external_tree() {
 # Compose validation uses an isolated copy of both the candidate file and its
 # .env. --project-directory keeps relative bind mounts anchored at the real
 # install, not at the temporary worktree.
-if ! candidate_compose config --quiet; then
+if ! validate_candidate_compose; then
   fail_with_rollback "The downloaded Bask Compose configuration is invalid. The running service was left unchanged."
 fi
 
