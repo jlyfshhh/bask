@@ -69,6 +69,14 @@ services:
     read_only: true
     security_opt:
       - no-new-privileges:true
+      # Ubuntu-family distributions mediate D-Bus through AppArmor, and the
+      # docker-default profile says nothing about it — an unmentioned mediation
+      # class is denied, so the scanner's first call to BlueZ is refused and it
+      # never sees a sensor. The installer loads deploy/apparmor/bask-scanner
+      # and points this at it. Left as docker-default the behaviour is exactly
+      # what it was before; on a host with no AppArmor at all Docker accepts the
+      # option and ignores it.
+      - apparmor=${BASK_SCANNER_APPARMOR:-docker-default}
     pids_limit: 128
     mem_limit: ${BASK_SCANNER_MEMORY_LIMIT:-256m}
     network_mode: none

@@ -695,6 +695,30 @@ secure_internal_tree() {
 [[ "$backup_external" == true ]] || secure_internal_tree "$backup_path" ||
   fail_with_rollback "Bask could not secure its internal backup directory."
 
+# Load the scanner's AppArmor profile where AppArmor is actually in force.
+#
+# Without it the scanner is confined by docker-default, which does not mention
+# D-Bus; AppArmor denies unmentioned mediation classes, so BlueZ is unreachable
+# and the scanner runs forever without seeing a sensor. That looks like a
+# hardware fault and is not one.
+#
+# Failure to load is not fatal. The scanner falls back to docker-default, which
+# is the behaviour every existing install already has — a worse scanner is
+# better than a failed install, and the keeper is told which they got.
+env_default BASK_SCANNER_APPARMOR docker-default
+if [[ -d /sys/kernel/security/apparmor ]] && command -v apparmor_parser >/dev/null 2>&1; then
+  profile_source="$source_dir/deploy/apparmor/bask-scanner"
+  if [[ -f "$profile_source" ]]; then
+    install -m 0644 "$profile_source" /etc/apparmor.d/bask-scanner
+    if apparmor_parser -r -W /etc/apparmor.d/bask-scanner 2>/dev/null; then
+      env_set BASK_SCANNER_APPARMOR bask-scanner
+    else
+      rm -f /etc/apparmor.d/bask-scanner
+      echo "Warning: Bask's AppArmor profile would not load; the scanner will run under docker-default and may not reach Bluetooth." >&2
+    fi
+  fi
+fi
+
 cp -p -- "$runtime/.env" "$project_dir/.env"
 chown "$run_user:$run_group" "$project_dir/.env"
 chmod 0600 "$project_dir/.env"
@@ -734,6 +758,36 @@ if [[ "$fresh_config" == true ]]; then
       -v "$data_path:/data" \
       --entrypoint python "$bask_image" -m server.init_keeper /data/config.json)"; then
     fail_with_rollback "Could not set up the Head Keeper key; Bask was not left unprotected."
+  fi
+fi
+
+# Create the database before either container can, as the uid the web service
+# runs as.
+#
+# The scanner runs as root — BlueZ's AdvertisementMonitor1 is root-only — and on
+# a first install both services start at once against an empty directory. The
+# scanner reliably wins, SQLite creates readings.db 0600 owned by root, and the
+# web service, running as the installing user's uid, then cannot open its own
+# database: "unable to open database file", crash-looping until the health check
+# gives up and the whole install rolls back.
+#
+# It only ever happens once. On every later run the file already exists with the
+# right owner, and root writes to it through DAC_OVERRIDE exactly as before —
+# which is why this survived until someone installed fresh.
+#
+# Creating it here settles ownership before the race can happen, and mirrors how
+# config.json is already laid down as $run_user above.
+if [[ ! -e "$data_path/readings.db" ]]; then
+  bask_tag="$(env_value BASK_TAG)"
+  bask_image="ghcr.io/jlyfshhh/bask:${bask_tag:-latest}"
+  docker image inspect "$bask_image" >/dev/null 2>&1 ||
+    fail_with_rollback "The downloaded Bask image is unavailable to initialise the database."
+  if ! docker run --rm \
+      --user "$run_uid:$run_gid" \
+      -e BASK_DATA_DIR=/data \
+      -v "$data_path:/data" \
+      --entrypoint python "$bask_image" -c 'from scanner import db; db.init_db()'; then
+    fail_with_rollback "Could not create Bask's database as uid $run_uid."
   fi
 fi
 
@@ -788,7 +842,19 @@ verify_container_boundary() {
     [[ "$web_security" == *'no-new-privileges:true'* ]] &&
     [[ "$scanner_caps_add" == '["DAC_OVERRIDE"]' ]] &&
     [[ "$scanner_caps_drop" == '["ALL"]' ]] &&
-    [[ "$scanner_security" == *'no-new-privileges:true'* ]]
+    [[ "$scanner_security" == *'no-new-privileges:true'* ]] &&
+    verify_scanner_apparmor
+}
+
+# Only meaningful where AppArmor is enforcing. Elsewhere Docker reports an empty
+# profile and there is nothing to assert.
+verify_scanner_apparmor() {
+  [[ -d /sys/kernel/security/apparmor ]] || return 0
+  local want applied
+  want="$(env_value BASK_SCANNER_APPARMOR)"
+  [[ -n "$want" ]] || want=docker-default
+  applied="$(docker inspect --format '{{.AppArmorProfile}}' bask-scanner 2>/dev/null || true)"
+  [[ "$applied" == "$want" ]]
 }
 
 if ! verify_container_boundary; then
