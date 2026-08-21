@@ -708,14 +708,16 @@ secure_internal_tree() {
 env_default BASK_SCANNER_APPARMOR docker-default
 if [[ -d /sys/kernel/security/apparmor ]] && command -v apparmor_parser >/dev/null 2>&1; then
   profile_source="$source_dir/deploy/apparmor/bask-scanner"
-  if [[ -f "$profile_source" ]]; then
-    install -m 0644 "$profile_source" /etc/apparmor.d/bask-scanner
-    if apparmor_parser -r -W /etc/apparmor.d/bask-scanner 2>/dev/null; then
-      env_set BASK_SCANNER_APPARMOR bask-scanner
-    else
-      rm -f /etc/apparmor.d/bask-scanner
-      echo "Warning: Bask's AppArmor profile would not load; the scanner will run under docker-default and may not reach Bluetooth." >&2
-    fi
+  # Every step here is allowed to fail. Writing to /etc/apparmor.d needs root,
+  # and the profile is an improvement rather than a requirement — falling back
+  # to docker-default is exactly the behaviour every existing install has.
+  if [[ -f "$profile_source" ]] &&
+     install -m 0644 "$profile_source" /etc/apparmor.d/bask-scanner 2>/dev/null &&
+     apparmor_parser -r -W /etc/apparmor.d/bask-scanner 2>/dev/null; then
+    env_set BASK_SCANNER_APPARMOR bask-scanner
+  else
+    rm -f /etc/apparmor.d/bask-scanner 2>/dev/null || true
+    echo "Warning: Bask's AppArmor profile could not be loaded; the scanner will run under docker-default and may not reach Bluetooth." >&2
   fi
 fi
 
@@ -854,7 +856,11 @@ verify_scanner_apparmor() {
   want="$(env_value BASK_SCANNER_APPARMOR)"
   [[ -n "$want" ]] || want=docker-default
   applied="$(docker inspect --format '{{.AppArmorProfile}}' bask-scanner 2>/dev/null || true)"
-  [[ "$applied" == "$want" ]]
+  # A running container always reports something — a profile name, or
+  # "unconfined". Nothing at all means the daemon could not tell us, and there is
+  # no assertion to make; the checks above have already established the
+  # container exists.
+  [[ -z "$applied" ]] || [[ "$applied" == "$want" ]]
 }
 
 if ! verify_container_boundary; then

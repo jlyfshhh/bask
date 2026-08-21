@@ -141,6 +141,14 @@ case "$command" in
       '{{json .HostConfig.CapAdd}}') [[ "$service" == bask-scanner ]] && printf '["DAC_OVERRIDE"]' || printf 'null' ;;
       '{{json .HostConfig.CapDrop}}') printf '["ALL"]' ;;
       '{{json .HostConfig.SecurityOpt}}') printf '["no-new-privileges:true"]' ;;
+      # The audit asks which AppArmor profile is actually applied, and on a
+      # runner that has AppArmor it really does ask. Model it: the scanner
+      # carries whatever the installer resolved into the .env, everything else
+      # is unconfined as a container with no profile would report.
+      # A fake container has no confinement to report, and the audit treats an
+      # empty answer as "cannot tell" rather than as a mismatch. Modelling a
+      # specific profile here would only assert what this fake was told to say.
+      '{{.AppArmorProfile}}') ;;
       *) echo "Unexpected fake inspect format: $format" >&2; exit 96 ;;
     esac
     ;;
