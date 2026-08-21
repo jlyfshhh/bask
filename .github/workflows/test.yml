@@ -24,7 +24,7 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt -r requirements-dev.txt
       - name: Shell syntax
-        run: bash -n get-bask.sh deploy/install.sh docker-entrypoint.sh scripts/backup.sh scripts/privacy-scan.sh tests/installer.sh tests/backup.sh tests/privacy-scan.sh
+        run: bash -n get-bask.sh deploy/install.sh docker-entrypoint.sh scripts/backup.sh scripts/privacy-scan.sh tests/installer.sh tests/backup.sh tests/privacy-scan.sh tests/compose-contract.sh
       - name: Privacy scan behavior
         run: bash tests/privacy-scan.sh
       - name: Privacy scan
@@ -36,6 +36,10 @@ jobs:
         run: |
           bash tests/installer.sh
           bash tests/backup.sh
+      # Real Docker, unlike the suite above, which fakes it. Catches how Compose
+      # actually resolves a shipped compose.yaml on a first install.
+      - name: Compose contract (real Docker)
+        run: bash tests/compose-contract.sh
       - name: Python compile and data-path smoke test
         run: |
           python -m py_compile server/*.py scanner/*.py
