@@ -60,4 +60,31 @@ if ! grep -q 'docker compose --project-directory "\$runtime"' "$root/deploy/inst
 fi
 echo "  the installer still validates against its staged bundle"
 
+# The security audit compares capability names against docker inspect output.
+# Docker 29 renders them as CAP_DAC_OVERRIDE where older daemons said
+# DAC_OVERRIDE, and comparing the raw string made the audit impossible to pass
+# on a current daemon — every fresh install failed after the containers had
+# already come up correctly. Check the normaliser against what this host's
+# daemon actually reports, rather than against a string in a comment.
+probe=""
+if docker image inspect alpine:latest >/dev/null 2>&1 || docker pull -q alpine:latest >/dev/null 2>&1; then
+  probe="$(docker create --cap-add DAC_OVERRIDE alpine:latest true 2>/dev/null || true)"
+fi
+if [[ -n "$probe" ]]; then
+  capability_report="$(docker inspect --format '{{json .HostConfig.CapAdd}}' "$probe" 2>/dev/null || true)"
+  docker rm -f "$probe" >/dev/null 2>&1 || true
+  if [[ "${capability_report//CAP_/}" != '["DAC_OVERRIDE"]' ]]; then
+    echo "This daemon reports capabilities as $capability_report, which the installer's" >&2
+    echo "audit does not normalise to the bare name it compares against." >&2
+    exit 1
+  fi
+  if ! grep -q 'strip_cap_prefix' "$root/deploy/install.sh"; then
+    echo "deploy/install.sh no longer normalises capability names before auditing them." >&2
+    exit 1
+  fi
+  echo "  capability names normalise for this daemon ($capability_report)"
+else
+  echo "  capability check skipped — no probe image available"
+fi
+
 echo "Compose contract tests passed."

@@ -741,6 +741,16 @@ if ! candidate_compose up -d; then
   fail_with_rollback "Bask's updated containers could not start."
 fi
 
+# Docker 29 reports capabilities by their kernel names — CAP_DAC_OVERRIDE —
+# where older daemons reported the bare DAC_OVERRIDE that this audit was written
+# against. Comparing the raw string made the check impossible to pass on a
+# current daemon, which failed every fresh install after the containers had
+# already started correctly. Compare on the bare name so the audit tests the
+# boundary rather than the daemon's spelling of it.
+strip_cap_prefix() {
+  printf '%s' "${1//CAP_/}"
+}
+
 verify_container_boundary() {
   local web_mounts scanner_mounts web_user scanner_user web_read_only
   local web_caps_add web_caps_drop web_security
@@ -753,11 +763,15 @@ verify_container_boundary() {
   web_read_only="$(docker inspect --format '{{.HostConfig.ReadonlyRootfs}}' bask 2>/dev/null || true)"
   scanner_read_only="$(docker inspect --format '{{.HostConfig.ReadonlyRootfs}}' bask-scanner 2>/dev/null || true)"
   web_caps_add="$(docker inspect --format '{{json .HostConfig.CapAdd}}' bask 2>/dev/null || true)"
+  web_caps_add="$(strip_cap_prefix "$web_caps_add")"
   web_caps_drop="$(docker inspect --format '{{json .HostConfig.CapDrop}}' bask 2>/dev/null || true)"
+  web_caps_drop="$(strip_cap_prefix "$web_caps_drop")"
   web_security="$(docker inspect --format '{{json .HostConfig.SecurityOpt}}' bask 2>/dev/null || true)"
   scanner_network="$(docker inspect --format '{{.HostConfig.NetworkMode}}' bask-scanner 2>/dev/null || true)"
   scanner_caps_add="$(docker inspect --format '{{json .HostConfig.CapAdd}}' bask-scanner 2>/dev/null || true)"
+  scanner_caps_add="$(strip_cap_prefix "$scanner_caps_add")"
   scanner_caps_drop="$(docker inspect --format '{{json .HostConfig.CapDrop}}' bask-scanner 2>/dev/null || true)"
+  scanner_caps_drop="$(strip_cap_prefix "$scanner_caps_drop")"
   scanner_security="$(docker inspect --format '{{json .HostConfig.SecurityOpt}}' bask-scanner 2>/dev/null || true)"
   expected_data_mount="$data_path|/data|true"
   scanner_bus_pattern='^/(var/)?run/dbus/system_bus_socket\|/var/run/dbus/system_bus_socket\|false$'
