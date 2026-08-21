@@ -1,0 +1,72 @@
+# AppArmor profile for Bask's Bluetooth scanner.
+#
+# Ubuntu-family distributions mediate D-Bus through AppArmor; Debian and
+# Raspberry Pi OS do not. Docker's generated docker-default profile says nothing
+# about D-Bus, and an unmentioned mediation class is denied — so on Ubuntu the
+# scanner's very first call to the system bus is refused:
+#
+#   [org.freedesktop.DBus.Error.AccessDenied] An AppArmor policy prevents this
+#   sender from sending this message ... member="AddMatch"
+#
+# The scanner then retries forever and never sees a sensor, which looks like a
+# hardware fault and is not one.
+#
+# This is docker-default's confinement with D-Bus opened only as far as BlueZ
+# and the bus driver. It is deliberately not `apparmor=unconfined`: the scanner
+# runs as root with a host socket mounted, and that is exactly the container
+# whose confinement is worth keeping.
+
+#include <tunables/global>
+
+profile bask-scanner flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  network,
+  capability,
+  file,
+  umount,
+
+  # Every process on a bus must greet the driver and register the signal matches
+  # it wants delivered. AddMatch is the call denied today; without Hello the
+  # connection is never usable at all.
+  dbus send bus=system path=/org/freedesktop/DBus
+       interface=org.freedesktop.DBus
+       member={Hello,AddMatch,RemoveMatch,GetNameOwner,NameHasOwner,ListNames,StartServiceByName}
+       peer=(name=org.freedesktop.DBus),
+  dbus receive bus=system peer=(name=org.freedesktop.DBus),
+
+  # BlueZ itself. Passive scanning registers an AdvertisementMonitor and then
+  # receives advertisement callbacks, so both directions are needed, as are the
+  # standard introspection and property interfaces the bindings use.
+  dbus send bus=system peer=(name=org.bluez),
+  dbus receive bus=system peer=(name=org.bluez),
+
+  # BlueZ calls back into an object the scanner exports, which arrives addressed
+  # to its own unique connection name rather than to a well-known one.
+  dbus send bus=system interface=org.freedesktop.DBus.{Introspectable,Properties,ObjectManager},
+  dbus receive bus=system interface=org.freedesktop.DBus.{Introspectable,Properties,ObjectManager},
+
+  # Nothing else on any bus. Session and accessibility buses are not reachable
+  # from this container and are refused explicitly rather than by omission.
+  deny dbus bus=session,
+  deny dbus bus=accessibility,
+
+  # Below here is docker-default's own confinement, unchanged.
+  deny @{PROC}/* w,
+  deny @{PROC}/sys/[^k]** w,
+  deny @{PROC}/sys/kernel/{?,??,[^s][^h][^m]**} w,
+  deny @{PROC}/sysrq-trigger rwklx,
+  deny @{PROC}/mem rwklx,
+  deny @{PROC}/kmem rwklx,
+  deny @{PROC}/kcore rwklx,
+  deny mount,
+  deny /sys/[^f]*/** wklx,
+  deny /sys/f[^s]*/** wklx,
+  deny /sys/fs/[^c]*/** wklx,
+  deny /sys/fs/c[^g]*/** wklx,
+  deny /sys/fs/cg[^r]*/** wklx,
+  deny /sys/firmware/** rwklx,
+  deny /sys/kernel/security/** rwklx,
+
+  ptrace (trace,read,tracedby,readby) peer=bask-scanner,
+}

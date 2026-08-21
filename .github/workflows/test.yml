@@ -24,7 +24,7 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt -r requirements-dev.txt
       - name: Shell syntax
-        run: bash -n get-bask.sh deploy/install.sh docker-entrypoint.sh scripts/backup.sh scripts/privacy-scan.sh tests/installer.sh tests/backup.sh tests/privacy-scan.sh tests/compose-contract.sh
+        run: bash -n get-bask.sh deploy/install.sh docker-entrypoint.sh scripts/backup.sh scripts/privacy-scan.sh tests/installer.sh tests/backup.sh tests/privacy-scan.sh tests/compose-contract.sh tests/apparmor-profile.sh
       - name: Privacy scan behavior
         run: bash tests/privacy-scan.sh
       - name: Privacy scan
@@ -40,6 +40,10 @@ jobs:
       # actually resolves a shipped compose.yaml on a first install.
       - name: Compose contract (real Docker)
         run: bash tests/compose-contract.sh
+      # ubuntu-latest runs AppArmor, which is the only place the scanner's D-Bus
+      # denial exists. Debian and Raspberry Pi OS cannot exercise this at all.
+      - name: AppArmor profile (real AppArmor host)
+        run: bash tests/apparmor-profile.sh
       - name: Python compile and data-path smoke test
         run: |
           python -m py_compile server/*.py scanner/*.py
