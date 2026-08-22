@@ -574,6 +574,10 @@ cp "$root/compose.yaml" "$fresh/bask/compose.yaml"
 fresh_output="$(run_deploy "$fresh")"
 grep -q 'Head Keeper key:  test-head-keeper-key' <<< "$fresh_output"
 [[ -f "$fresh/bask/.env" && -f "$fresh/bask/data/config.json" ]]
+grep -q '^BASK_KEEPER_KEY=test-head-keeper-key$' "$fresh/bask/.env" || {
+  echo "The Head Keeper key was shown but not kept where it can be found again." >&2
+  exit 1
+}
 grep -q '^BASK_ALLOW_EXTERNAL_PATHS=false$' "$fresh/bask/.env"
 echo "  first-install behavior remains intact"
 
@@ -584,10 +588,14 @@ echo "  first-install behavior remains intact"
 # already set alone, and must issue a new one once the record is cleared.
 printf '{"keeper":{"salt":"s","hash":"h"}}\n' >"$fresh/bask/data/config.json"
 update_output="$(run_deploy "$fresh")"
-if grep -q 'Head Keeper key:' <<< "$update_output"; then
-  echo "An update reissued a Head Keeper key that was already set." >&2
+grep -q 'Head Keeper key:  test-head-keeper-key' <<< "$update_output" || {
+  echo "An update stopped showing the Head Keeper key already on file." >&2
   exit 1
-fi
+}
+grep -q '^BASK_KEEPER_KEY=test-head-keeper-key$' "$fresh/bask/.env" || {
+  echo "An update overwrote or dropped the stored Head Keeper key." >&2
+  exit 1
+}
 printf '{"sensors":{}}\n' >"$fresh/bask/data/config.json"
 recovered_output="$(run_deploy "$fresh")"
 grep -q 'Head Keeper key:  test-head-keeper-key' <<< "$recovered_output" || {

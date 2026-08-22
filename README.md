@@ -215,18 +215,22 @@ house should be able to glance at it. Changing the setup is not.
 
 ### Head Keeper key
 
-A fresh install generates a **Head Keeper key** and prints it once. It is needed
+A fresh install generates a **Head Keeper key**, prints it, and keeps a copy in
+`~/bask/.env` (`grep BASK_KEEPER_KEY ~/bask/.env`). It is needed
 to change sensors, enclosures, species ranges, thermostats, cloud integrations,
-phone alerts, backups, and updates. It is stored only as a PBKDF2 hash — Bask
-never writes it back in the clear and has no endpoint that returns it.
+phone alerts, backups, and updates. The running application stores only a PBKDF2
+hash of it and has no endpoint that returns it; the plaintext copy lives beside
+the install's other settings in `.env`, mode 0600, which is what makes a lost key
+recoverable instead of terminal.
 
 - **The display stays open.** Every read the dashboard needs works without the
   key, so the wall display and everyone's phones are unaffected.
 - Set, change, or remove it under **Manage → Settings**. Changing it requires
   the current key, and doing so signs out every other device.
-- Also running Shed? Set Bask's key to the same Head Keeper code and the
-  household has one key to remember. Rotating it in Shed does not rotate it
-  here — update both.
+- **Bask and Shed have separate keys.** Each app generates its own, and a Shed
+  code will not unlock Bask. You can set Bask's key to match under **Manage →
+  Settings** so the household has one to remember, but that is a step you take;
+  rotating one never rotates the other.
 - **Upgrading an existing install does not lock you out.** Installs with no key
   keep behaving exactly as before until you set one.
 

@@ -92,8 +92,14 @@ The installer also prints a **Head Keeper key**, once:
 Head Keeper key:  bask_XXXXXXXXXXXXXXXXXXXXXXXX
 ```
 
-Save it somewhere you'll find it again. Bask stores only a hash of it, so
-nobody — including you — can read it back out later.
+Bask verifies it against a stored hash, and keeps your own copy in
+`~/bask/.env` so it is never lost to a scrolled-past line:
+
+```bash
+grep BASK_KEEPER_KEY ~/bask/.env
+```
+
+The installer prints it at the end of every run, not only the first.
 
 Anyone in the house can open the dashboard and read it without the key. The key
 is only needed to *change* the setup: adding sensors, editing enclosures and
@@ -111,10 +117,11 @@ not how a new install arrives.
 
 ### If you lose the key
 
-You do not need to reinstall, and reinstalling on its own will not help — an
-uninstall keeps your data directory, so the old key record survives it.
+Read it back out of `~/bask/.env` with the command above, or run the installer
+again — it prints the key at the end whether or not it just created one.
 
-Delete the `"keeper"` block from `~/bask/data/config.json` and restart Bask:
+If the key predates Bask keeping a copy, or you changed it in Manage and did not
+record the new one, clear the record and let the installer issue a fresh key:
 
 ```bash
 cd ~/bask && docker compose stop
@@ -123,9 +130,12 @@ sudo python3 -c "import json,pathlib; p=pathlib.Path('data/config.json'); d=json
 docker compose start
 ```
 
-Bask is then fully open again — the dashboard was readable throughout — and you
-can set a new key under **⚙ Manage → Settings → Head Keeper key**. Running the
-installer again at that point will also mint and print a fresh one for you.
+Bask is fully open while no key is set — the dashboard stays readable throughout
+— so set a new one under **⚙ Manage → Settings → Head Keeper key**, or re-run the
+installer to be given one.
+
+Reinstalling on its own will not help: an uninstall keeps your data directory on
+purpose, so the existing key record survives it.
 
 ## 5. Open Bask and add the first sensor
 

@@ -775,6 +775,19 @@ if ! keeper_key="$(docker run --rm \
   printf '  Remove the "keeper" block from %s/config.json and run this installer again.\n\n' "$data_path" >&2
 fi
 
+# Keep the key where the keeper can find it again, the same way Shed keeps its
+# setup token in its own .env. config.json still stores only a hash and is still
+# what verifies an unlock; this is the keeper's own copy. Without it, missing one
+# line of install output locked people out of their own dashboard permanently,
+# and neither reinstalling nor restoring a backup could help, because both
+# preserve the key record they could not read.
+if [[ -n "$keeper_key" ]]; then
+  env_set BASK_KEEPER_KEY "$keeper_key"
+  cp -p -- "$runtime/.env" "$project_dir/.env"
+  chown "$run_user:$run_group" "$project_dir/.env"
+  chmod 0600 "$project_dir/.env"
+fi
+
 # Create the database before either container can, as the uid the web service
 # runs as.
 #
@@ -925,12 +938,24 @@ echo "  Back up now:     $project_dir/scripts/backup.sh"
 if [[ -n "$preupdate_backup" ]]; then
   echo "  Update backup:   $preupdate_backup"
 fi
-if [[ -n "$keeper_key" ]]; then
-  echo "────────────────────────────────────────────────────────────"
-  echo "  Head Keeper key:  $keeper_key"
+# Show the key on every install, not only the one that minted it. A keeper who
+# scrolled past it, or who is reinstalling precisely because they lost it, needs
+# it now — and it is the last thing printed so nothing scrolls it away.
+shown_keeper_key="$keeper_key"
+[[ -n "$shown_keeper_key" ]] || shown_keeper_key="$(env_value BASK_KEEPER_KEY "$project_dir/.env")"
+echo "────────────────────────────────────────────────────────────"
+if [[ -n "$shown_keeper_key" ]]; then
+  echo "  Head Keeper key:  $shown_keeper_key"
   echo
-  echo "  Save this now — it is shown once and stored only as a hash."
+  echo "  Needed to change sensors, enclosures, ranges, and integrations."
   echo "  Anyone in the house can read the dashboard without it."
-  echo "  It is needed to change sensors, enclosures, ranges, and integrations."
+  echo "  Kept in $project_dir/.env — find it again with:"
+  echo "    grep BASK_KEEPER_KEY $project_dir/.env"
+else
+  # An install predating the key being kept in .env. The stored hash cannot be
+  # read back, so say how to be issued a new one rather than implying it exists.
+  echo "  This install's Head Keeper key predates Bask keeping a copy of it."
+  echo "  If you no longer have it, clear the \"keeper\" block from"
+  echo "  $data_path/config.json and run this installer again for a new one."
 fi
 echo "────────────────────────────────────────────────────────────"
