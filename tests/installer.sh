@@ -165,7 +165,24 @@ case "$command" in
     set_value "$service.running" false
     ;;
   run)
-    printf 'test-head-keeper-key\n'
+    # Stand in for server.init_keeper: mint a key only when the config has no
+    # keeper block, print nothing when one is already set, and never overwrite.
+    cfg=""
+    prev=""
+    for arg in "$@"; do
+      [[ "$prev" != "-v" ]] || cfg="${arg%%:*}/config.json"
+      prev="$arg"
+    done
+    if [[ -n "$cfg" ]] && grep -q '"keeper"' "$cfg" 2>/dev/null; then
+      echo "this install already has a Head Keeper key; leaving it alone" >&2
+    else
+      if [[ -n "$cfg" ]]; then
+        mkdir -p "$(dirname "$cfg")"
+        [[ -f "$cfg" ]] || printf '{}' >"$cfg"
+        python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["keeper"]={"salt":"s","hash":"h"}; json.dump(d,open(p,"w"))' "$cfg"
+      fi
+      printf 'test-head-keeper-key\n'
+    fi
     ;;
   *) echo "Unexpected fake Docker invocation: $command $*" >&2; exit 94 ;;
 esac
@@ -559,6 +576,25 @@ grep -q 'Head Keeper key:  test-head-keeper-key' <<< "$fresh_output"
 [[ -f "$fresh/bask/.env" && -f "$fresh/bask/data/config.json" ]]
 grep -q '^BASK_ALLOW_EXTERNAL_PATHS=false$' "$fresh/bask/.env"
 echo "  first-install behavior remains intact"
+
+# The key is stored only as a hash and cannot be read back, and an uninstall
+# keeps the data directory, so a keeper who missed it had no way to get another:
+# reinstalling found the old record and stayed silent, because minting was gated
+# on a brand-new config. Running the installer again must leave a key that is
+# already set alone, and must issue a new one once the record is cleared.
+printf '{"keeper":{"salt":"s","hash":"h"}}\n' >"$fresh/bask/data/config.json"
+update_output="$(run_deploy "$fresh")"
+if grep -q 'Head Keeper key:' <<< "$update_output"; then
+  echo "An update reissued a Head Keeper key that was already set." >&2
+  exit 1
+fi
+printf '{"sensors":{}}\n' >"$fresh/bask/data/config.json"
+recovered_output="$(run_deploy "$fresh")"
+grep -q 'Head Keeper key:  test-head-keeper-key' <<< "$recovered_output" || {
+  echo "Clearing the keeper record did not let the installer issue a new key." >&2
+  exit 1
+}
+echo "  a lost Head Keeper key can be reissued by clearing the record"
 
 # get-bask stages a real Git worktree and advances HEAD only after deploy has
 # passed. A failed update keeps the exact old revision and leaves no worktree.

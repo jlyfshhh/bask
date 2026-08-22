@@ -749,18 +749,30 @@ if [[ ! -f "$data_path/config.json" ]]; then
   config_created=true
 fi
 
+# init_keeper is self-guarding: it mints a key only when the config has none,
+# prints nothing on stdout when one is already set, and never overwrites. Gating
+# it on a brand-new config meant a keeper who lost their key had no supported way
+# back — the key is stored only as a hash, so it cannot be read out again, and
+# reinstalling kept the old record because the data directory survives an
+# uninstall. Running it every time is what makes the documented recovery work:
+# remove the "keeper" block from config.json, run this installer again, and a
+# fresh key is minted and printed.
 keeper_key=""
-if [[ "$fresh_config" == true ]]; then
-  bask_tag="$(env_value BASK_TAG)"
-  bask_image="ghcr.io/jlyfshhh/bask:${bask_tag:-latest}"
-  docker image inspect "$bask_image" >/dev/null 2>&1 ||
-    fail_with_rollback "The downloaded Bask image is unavailable for Head Keeper setup."
-  if ! keeper_key="$(docker run --rm \
-      --user "$run_uid:$run_gid" \
-      -v "$data_path:/data" \
-      --entrypoint python "$bask_image" -m server.init_keeper /data/config.json)"; then
+bask_tag="$(env_value BASK_TAG)"
+bask_image="ghcr.io/jlyfshhh/bask:${bask_tag:-latest}"
+docker image inspect "$bask_image" >/dev/null 2>&1 ||
+  fail_with_rollback "The downloaded Bask image is unavailable for Head Keeper setup."
+if ! keeper_key="$(docker run --rm \
+    --user "$run_uid:$run_gid" \
+    -v "$data_path:/data" \
+    --entrypoint python "$bask_image" -m server.init_keeper /data/config.json)"; then
+  if [[ "$fresh_config" == true ]]; then
     fail_with_rollback "Could not set up the Head Keeper key; Bask was not left unprotected."
   fi
+  # An existing install whose keeper record is unreadable. Bask refuses every
+  # setup change in that state, so continuing leaves nothing open.
+  printf '\n  Warning: Bask'"'"'s Head Keeper record is unreadable, so setup changes stay refused.\n' >&2
+  printf '  Remove the "keeper" block from %s/config.json and run this installer again.\n\n' "$data_path" >&2
 fi
 
 # Create the database before either container can, as the uid the web service

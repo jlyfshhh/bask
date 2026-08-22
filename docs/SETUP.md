@@ -100,13 +100,32 @@ is only needed to *change* the setup: adding sensors, editing enclosures and
 species ranges, connecting a thermostat or humidifier, phone alerts, backups,
 and updates.
 
-You can change it any time under **⚙ Manage → Settings → Head Keeper key** —
-including setting it to the same Head Keeper code you use in Shed, so the
-household only has one to remember.
+**Bask and Shed have separate keys by default.** Bask generates this one; Shed
+issues its own access codes. They are different secrets in different apps, and a
+Shed access code will not unlock Bask until you make it so.
 
-If you lose it: edit `~/bask/data/config.json`, delete the `"keeper"` block,
-and restart Bask (`cd ~/bask && docker compose restart`). That returns Bask to
-being fully open so you can set a new key.
+You can change Bask's key any time under **⚙ Manage → Settings → Head Keeper
+key** — including setting it to the same Head Keeper code you use in Shed, so
+the household only has one to remember. That is a step you have to take; it is
+not how a new install arrives.
+
+### If you lose the key
+
+You do not need to reinstall, and reinstalling on its own will not help — an
+uninstall keeps your data directory, so the old key record survives it.
+
+Delete the `"keeper"` block from `~/bask/data/config.json` and restart Bask:
+
+```bash
+cd ~/bask && docker compose stop
+sudo cp data/config.json data/config.json.backup
+sudo python3 -c "import json,pathlib; p=pathlib.Path('data/config.json'); d=json.loads(p.read_text()); d.pop('keeper',None); d['_revision']=d.get('_revision',0)+1; p.write_text(json.dumps(d,indent=2))"
+docker compose start
+```
+
+Bask is then fully open again — the dashboard was readable throughout — and you
+can set a new key under **⚙ Manage → Settings → Head Keeper key**. Running the
+installer again at that point will also mint and print a fresh one for you.
 
 ## 5. Open Bask and add the first sensor
 
