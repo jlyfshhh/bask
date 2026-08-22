@@ -9,6 +9,9 @@ readings.db-shm
 readings.db-wal
 alert-state.json
 data/
+# ...but the bundled ZIP centroid table is source, not runtime state. The rule
+# above matches at any depth, so it silently kept server/data out of a commit.
+!server/data/
 backups/
 .env
 

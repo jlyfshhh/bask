@@ -36,6 +36,8 @@ import db  # noqa: E402
 from server import keeper
 from server.alerts import AlertStateStore
 from server.cielo import CieloMonitor
+from server import us_zip
+from server.solar import is_daytime
 from server.keeper_throttle import KeeperUnlockThrottle, key_fingerprint, source_key
 from server.vesync import VeSyncHumidifierMonitor
 
@@ -87,6 +89,16 @@ def _normalise_config(cfg: dict) -> dict:
     cfg["settings"].setdefault("low_battery_pct", 20)
     cfg["settings"].setdefault("day_start_hour", 8)   # heat on  → day ranges
     cfg["settings"].setdefault("day_end_hour", 20)    # heat off → night ranges
+    # Day/night can follow the clock or the sun. "fixed" is the default so that
+    # upgrading changes nothing until a keeper asks for it.
+    cfg["settings"].setdefault("day_mode", "fixed")   # "fixed" | "solar"
+    cfg["settings"].setdefault("latitude", None)
+    cfg["settings"].setdefault("longitude", None)
+    cfg["settings"].setdefault("location_label", "")  # e.g. the ZIP entered
+    # Lighting is rarely switched at the exact horizon crossing; these shift each
+    # edge the way a real timer is set.
+    cfg["settings"].setdefault("sunrise_offset_minutes", 0)
+    cfg["settings"].setdefault("sunset_offset_minutes", 0)
     cfg.setdefault("thermostats", [])                 # optional Herpstat SpyderWeb units
     # Herpstat's RAWSTATUS numbers do not identify their unit.  Older Bask
     # versions implicitly assumed the thermostat matched Bask's display unit;
@@ -226,14 +238,6 @@ def _check(value, lo, hi) -> bool:
     if hi is not None and value > hi:
         return False
     return True
-
-
-def is_daytime(settings) -> bool:
-    """True when the current local hour is inside the day (heat-on) window."""
-    start = settings.get("day_start_hour", 8)
-    end = settings.get("day_end_hour", 20)
-    h = datetime.datetime.now().hour
-    return start <= h < end if start <= end else (h >= start or h < end)
 
 
 NIGHT_KEYS = ("night_warm_temp_min", "night_warm_temp_max", "night_cool_temp_min",
@@ -1659,12 +1663,36 @@ class SettingsPayload(BaseModel):
     low_battery_pct: int | None = Field(None, ge=0, le=100)
     day_start_hour: int | None = Field(None, ge=0, le=23)
     day_end_hour: int | None = Field(None, ge=0, le=23)
+    day_mode: Literal["fixed", "solar"] | None = None
+    latitude: float | None = Field(None, ge=-90, le=90)
+    longitude: float | None = Field(None, ge=-180, le=180)
+    location_label: str | None = Field(None, max_length=40)
+    # A US ZIP is what most keepers know offhand. Resolved here, from a bundled
+    # table, into the coordinates the sun maths actually needs. Coordinates
+    # remain accepted directly, which is the only option outside the US.
+    zip_code: str | None = Field(None, max_length=10)
+    sunrise_offset_minutes: int | None = Field(None, ge=-180, le=180)
+    sunset_offset_minutes: int | None = Field(None, ge=-180, le=180)
 
 
 @app.put("/api/settings")
 def update_settings(payload: SettingsPayload, _: None = Keeper,
                     revision: int = ConfigWrite):
     values = payload.model_dump(exclude_none=True)
+
+    zip_code = values.pop("zip_code", None)
+    if zip_code is not None:
+        normalized = us_zip.normalize(zip_code)
+        coordinates = us_zip.lookup(zip_code) if normalized else None
+        if not us_zip.table_available():
+            raise HTTPException(503, "ZIP lookup is unavailable in this build; enter coordinates instead.")
+        if coordinates is None:
+            # Refuse rather than silently leaving day/night on the old location:
+            # a keeper who typed their ZIP and saw "saved" would reasonably
+            # believe the sun times had moved.
+            raise HTTPException(400, "That is not a US ZIP code we can place.")
+        values["latitude"], values["longitude"] = coordinates
+        values.setdefault("location_label", normalized)
 
     def update(cfg: dict) -> dict:
         cfg["settings"].update(values)
