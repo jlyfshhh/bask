@@ -579,6 +579,10 @@ a.btn { text-decoration: none; }
 }
 .night-toggle input { width: 26px; height: 26px; flex-shrink: 0; }
 .daywin { display: flex; gap: 12px; }
+.daywin-solar { display: grid; gap: 10px; margin-top: 10px; }
+.zip-input { flex: 1 1 120px; min-width: 0; min-height: var(--tap); padding: 0 12px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 16px; }
+.zip-input:focus { outline: none; border-color: var(--accent); }
+.daywin-solar .dw-cell { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .dw-cell { flex: 1; display: flex; align-items: center; gap: 10px; }
 .dw-cell > span { font-size: 0.9rem; color: var(--muted); font-weight: 700; min-width: 40px; }
 .dw-cell .stepper { flex: 1; }

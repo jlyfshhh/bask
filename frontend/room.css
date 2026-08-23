@@ -217,3 +217,4 @@ h2 { margin-bottom: 0; font-size: clamp(25px, 2.75vh, 40px); letter-spacing: -.0
   .ticker-track { animation: none; padding-left: 0; }
   .progress-track span { transition: none; }
 }
+

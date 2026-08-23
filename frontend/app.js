@@ -1605,11 +1605,16 @@ function renderSettingsPane() {
       ${stepperPlain("stale_after_minutes", s.stale_after_minutes ?? 10, 1, "min")}</div>
     <div class="field"><label>Low-battery warning below</label>
       ${stepperPlain("low_battery_pct", s.low_battery_pct ?? 20, 5, "%")}</div>
-    <div class="field"><label>Daytime hours — heat on (☀️ day ranges apply; outside = 🌙 night)</label>
+    <div class="field"><label>Day and night — when ☀️ day ranges apply (outside = 🌙 night)</label>
+      <div class="toggle-row">
+        <button class="btn ${(s.day_mode || "fixed") === "fixed" ? "on" : ""}" onclick="setDayMode('fixed')">Set hours</button>
+        <button class="btn ${s.day_mode === "solar" ? "on" : ""}" onclick="setDayMode('solar')">Sunrise &amp; sunset</button>
+      </div>
+      ${s.day_mode === "solar" ? solarDayFields(s) : `
       <div class="daywin">
         <div class="dw-cell"><span>From</span>${hourStepper("day_start_hour", s.day_start_hour ?? 8)}</div>
         <div class="dw-cell"><span>To</span>${hourStepper("day_end_hour", s.day_end_hour ?? 20)}</div>
-      </div></div>
+      </div>`}</div>
     <div class="field"><label>📱 Phone alerts — get pinged when an enclosure needs attention</label>
       <div id="alerts-setting"></div></div>
     <div class="field"><label>🔄 Updates</label>
@@ -1859,8 +1864,11 @@ function queueSettingWrite(body, applySavedValue) {
   const run = async () => {
     if (epoch !== _settingsWriteEpoch) return;
     try {
-      await api("PUT", "/api/settings", body);
-      if (epoch === _settingsWriteEpoch) applySavedValue();
+      // The response carries the settings as saved, which matters when the
+      // server derived something the client could not — resolving a ZIP to
+      // coordinates, for one. Existing callers simply ignore it.
+      const saved = await api("PUT", "/api/settings", body);
+      if (epoch === _settingsWriteEpoch) applySavedValue(saved && saved.settings);
     } catch (error) {
       if (error.conflict) return; // global recovery already reloaded the form
       _settingsWriteEpoch += 1;   // cancel later clicks based on this failed form
@@ -1903,6 +1911,75 @@ async function setUnit(u) {
   await queueSettingWrite({ temp_unit: u }, () => {
     _settings.temp_unit = u; _tempUnit = u;
     renderSettingsPane(); renderSpeciesPane();
+  });
+}
+
+// ── Day and night from the sun ───────────────────────────────
+// A ZIP is what most keepers know offhand; it is resolved to coordinates on the
+// server from a bundled table, so nothing about where they live leaves the box.
+// Coordinates stay editable directly, which is the only option outside the US.
+function solarDayFields(s) {
+  const placed = typeof s.latitude === "number" && typeof s.longitude === "number";
+  const where = placed
+    ? `${s.location_label ? s.location_label + " · " : ""}${s.latitude.toFixed(2)}, ${s.longitude.toFixed(2)}`
+    : "";
+  return `
+    <div class="daywin-solar">
+      <div class="dw-cell"><span>ZIP code</span>
+        <input id="solar-zip" class="zip-input" inputmode="numeric" maxlength="10"
+               placeholder="${placed ? (s.location_label || "set") : "e.g. 10001"}"
+               onkeydown="if(event.key==='Enter')saveSolarZip()">
+        <button class="btn" onclick="saveSolarZip()">Set</button>
+      </div>
+      ${placed ? `<div class="muted-note" style="text-align:left">Using ${where}</div>`
+               : `<div class="muted-note" style="text-align:left">Set a location, or day and night fall back to the set hours.</div>`}
+      <div class="daywin">
+        <div class="dw-cell"><span>Day starts</span>${offsetStepper("sunrise_offset_minutes", s.sunrise_offset_minutes ?? 0)}</div>
+        <div class="dw-cell"><span>Day ends</span>${offsetStepper("sunset_offset_minutes", s.sunset_offset_minutes ?? 0)}</div>
+      </div>
+      <div class="muted-note" style="text-align:left">Offsets shift each edge, the way a light timer is usually set a little inside first and last light.</div>
+    </div>`;
+}
+
+function fmtOffset(v) {
+  if (!v) return "at sunrise/sunset";
+  return `${v > 0 ? "+" : "−"}${Math.abs(v)} min`;
+}
+
+function offsetStepper(key, val) {
+  return `<div class="stepper" id="set-${key}" data-val="${val}">
+    <button class="step-btn" onclick="stepOffset('${idAttr(key)}',-15)">−</button>
+    <div class="sval">${fmtOffset(val)}</div>
+    <button class="step-btn" onclick="stepOffset('${idAttr(key)}',15)">+</button></div>`;
+}
+
+async function stepOffset(key, dir) {
+  const el = document.getElementById("set-" + key);
+  // Clamped to the range the API accepts, so the control cannot ask for a
+  // setting that will be refused.
+  const v = Math.max(-180, Math.min(180, Number(el.dataset.val) + dir));
+  el.dataset.val = v;
+  el.querySelector(".sval").textContent = fmtOffset(v);
+  await queueSettingWrite({ [key]: v }, () => { _settings[key] = v; });
+}
+
+async function setDayMode(mode) {
+  await queueSettingWrite({ day_mode: mode }, () => {
+    _settings.day_mode = mode;
+    renderSettingsPane();
+  });
+}
+
+async function saveSolarZip() {
+  const input = document.getElementById("solar-zip");
+  const zip = (input.value || "").trim();
+  if (!zip) return;
+  input.value = "";
+  await queueSettingWrite({ zip_code: zip }, (settings) => {
+    // The server resolves the ZIP, so take the coordinates back from it rather
+    // than guessing them here.
+    if (settings) Object.assign(_settings, settings);
+    renderSettingsPane();
   });
 }
 
