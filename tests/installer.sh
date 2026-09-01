@@ -674,3 +674,23 @@ run_get_bask >/dev/null
 echo "  staged Git update advances the checkout only after verified deployment"
 
 echo "Standalone Bask installer tests passed."
+
+# A data directory the keeper cannot enter is the normal steady state: the
+# installer creates it 0700 and the container is chowned to its own uid. If
+# resolving the path requires entering it, every update after the first fails
+# with "Permission denied" and rolls back. Reproduced on a real install.
+unenterable="$work/unenterable"
+mkdir -p "$unenterable/home" "$unenterable/bask/data" "$unenterable/docker"
+cp "$root/compose.yaml" "$unenterable/bask/compose.yaml"
+printf 'records\n' >"$unenterable/bask/data/readings.db"
+chmod 000 "$unenterable/bask/data"
+if ! run_deploy "$unenterable" >"$unenterable/out" 2>&1; then
+  chmod 755 "$unenterable/bask/data"
+  echo "An install failed on a data directory it could not enter." >&2
+  tail -5 "$unenterable/out" >&2
+  exit 1
+fi
+chmod 755 "$unenterable/bask/data"
+[[ "$(cat "$unenterable/bask/data/readings.db")" == "records" ]] || {
+  echo "The unenterable-directory install disturbed existing data." >&2; exit 1; }
+echo "  a data directory the keeper cannot enter still updates"

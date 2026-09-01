@@ -504,7 +504,18 @@ prepare_storage_path() {
   elif ! create_internal_directory "$candidate"; then
     fail_with_rollback "External $label must already be a dedicated directory, and internal paths cannot traverse symlinks or '..': $candidate"
   fi
-  canonical="$(cd -- "$candidate" && pwd -P)"
+  # Entering the path to resolve it fails once the container owns the data
+  # directory: it is created 0700 and chowned to the container's uid, so the
+  # keeper running the installer cannot cd into it and every later update dies
+  # here. Resolve the parent instead and refuse a symlinked final component,
+  # keeping the guarantee create_internal_directory already enforces.
+  if ! canonical="$(cd -- "$candidate" 2>/dev/null && pwd -P)"; then
+    [[ ! -L "$candidate" ]] || fail_with_rollback "$label must not be a symlink: $candidate"
+    local parent
+    parent="$(cd -- "$(dirname -- "$candidate")" 2>/dev/null && pwd -P)" ||
+      fail_with_rollback "$label cannot be resolved; its parent directory is unreadable: $candidate"
+    canonical="$parent/$(basename -- "$candidate")"
+  fi
   path_is_protected "$canonical" && fail_with_rollback "$label must be a dedicated directory, not $canonical."
   case "$canonical" in "$project_dir"/*) ;; *) is_external=true ;; esac
   if [[ "$is_external" == true && "$allow_external" != true ]]; then
