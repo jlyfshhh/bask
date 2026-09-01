@@ -494,6 +494,25 @@ path_is_protected() {
   return 1
 }
 
+# Resolve a directory to its physical path without needing to enter it.
+#
+# The data directory is created 0700 and chowned to the container's uid, so
+# after the first install the keeper running this script cannot cd into it.
+# Anything resolving a path by entering it failed with "Permission denied" on
+# every later update. Falling back to the parent keeps the symlink guarantee:
+# a symlinked final component is refused, and create_internal_directory already
+# checks every component above it.
+canonical_dir() {
+  local dir="$1" resolved parent
+  if resolved="$(cd -- "$dir" 2>/dev/null && pwd -P)"; then
+    printf '%s\n' "$resolved"
+    return 0
+  fi
+  [[ ! -L "$dir" ]] || return 1
+  parent="$(cd -- "$(dirname -- "$dir")" 2>/dev/null && pwd -P)" || return 1
+  printf '%s/%s\n' "$parent" "$(basename -- "$dir")"
+}
+
 prepare_storage_path() {
   local label="$1" raw_value="$2" path_var="$3" external_var="$4"
   local candidate canonical is_external=false
@@ -504,18 +523,8 @@ prepare_storage_path() {
   elif ! create_internal_directory "$candidate"; then
     fail_with_rollback "External $label must already be a dedicated directory, and internal paths cannot traverse symlinks or '..': $candidate"
   fi
-  # Entering the path to resolve it fails once the container owns the data
-  # directory: it is created 0700 and chowned to the container's uid, so the
-  # keeper running the installer cannot cd into it and every later update dies
-  # here. Resolve the parent instead and refuse a symlinked final component,
-  # keeping the guarantee create_internal_directory already enforces.
-  if ! canonical="$(cd -- "$candidate" 2>/dev/null && pwd -P)"; then
-    [[ ! -L "$candidate" ]] || fail_with_rollback "$label must not be a symlink: $candidate"
-    local parent
-    parent="$(cd -- "$(dirname -- "$candidate")" 2>/dev/null && pwd -P)" ||
-      fail_with_rollback "$label cannot be resolved; its parent directory is unreadable: $candidate"
-    canonical="$parent/$(basename -- "$candidate")"
-  fi
+  canonical="$(canonical_dir "$candidate")" ||
+    fail_with_rollback "$label cannot be resolved; it is a symlink or its parent is unreadable: $candidate"
   path_is_protected "$canonical" && fail_with_rollback "$label must be a dedicated directory, not $canonical."
   case "$canonical" in "$project_dir"/*) ;; *) is_external=true ;; esac
   if [[ "$is_external" == true && "$allow_external" != true ]]; then
@@ -575,7 +584,8 @@ live_data_path="$data_path"
 if [[ -f "$state/bask.present" ]]; then
   mounted_data="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{println .Source}}{{end}}{{end}}' bask 2>/dev/null | head -n 1 || true)"
   if [[ -n "$mounted_data" && -d "$mounted_data" ]]; then
-    live_data_path="$(cd -- "$mounted_data" && pwd -P)"
+    live_data_path="$(canonical_dir "$mounted_data")" ||
+      fail_with_rollback "The running Bask container's /data source cannot be resolved: $mounted_data"
     path_is_protected "$live_data_path" && fail_with_rollback "The running Bask container has an unsafe /data mount: $live_data_path"
     case "$live_data_path" in "$project_dir"/*) ;; *)
       [[ "$allow_external" == true ]] || fail_with_rollback "The running Bask data mount is outside $project_dir. Set BASK_ALLOW_EXTERNAL_PATHS=true after verifying it."
