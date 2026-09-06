@@ -4,4 +4,4 @@
 # Starlette 1.x prefers the httpx2 compatibility package for TestClient and
 # only keeps legacy httpx support as a deprecated fallback. Without it the API
 # tests either warn today or stop collecting once that fallback is removed.
-httpx2>=2.9.0
+httpx2>=2.12.0
