@@ -241,6 +241,64 @@ def test_prune_drops_raw_but_never_rollups(db) -> None:
     print("  ✓ raw pruned, rollup kept")
 
 
+def test_lagging_watermark_after_outage_does_not_clobber_history(db) -> None:
+    """A rollup that runs after a long gap folds its backlog without corruption.
+
+    When the maintenance loop has not run for a while — the Pi was off, the
+    container was stopped, a backup was restored — the watermark lags far behind
+    now, so the next pass reaches back to fold the backlog. That reach must stop
+    at the retention edge: below it the raw is being pruned this pass, so a lone
+    surviving sample is a stray, and recomputing an out-of-retention hour from
+    it would overwrite the complete aggregate that rolled up before its raw was
+    discarded. Set the lagging watermark explicitly so the guarantee holds no
+    matter what state earlier checks happened to leave behind.
+    """
+    now = int(time.time())
+    current_hour = now - (now % 3600)
+    cutoff = now - db.RAW_RETENTION_DAYS * 86400
+
+    # The watermark sits ~40 days back, as it would after a long outage.
+    with db.get_conn() as conn:
+        conn.execute(
+            "INSERT INTO climate_rollup_state (singleton, through_hour) VALUES (1, ?) "
+            "ON CONFLICT(singleton) DO UPDATE SET through_hour=excluded.through_hour",
+            (current_hour - 40 * 86400,))
+
+    # An out-of-retention hour that already has its complete durable aggregate,
+    # plus a single stray sample that lingered in it past retention.
+    old_hour = current_hour - (db.RAW_RETENTION_DAYS + 3) * 86400
+    old_hour -= old_hour % 3600
+    series = "ROLLUP:OUTAGE"
+    db.write_climate_tick(old_hour + 30, [
+        {"source": "sensor", "series": series, "metric": "temp_c",
+         "value": 91.0, "label": "Outage Probe"}], [])
+    with db.get_conn() as conn:
+        sid = conn.execute("SELECT id FROM climate_series WHERE series=?", (series,)).fetchone()[0]
+        conn.execute("INSERT INTO climate_hourly VALUES (?, ?, ?, ?, ?, ?)",
+                     (old_hour, sid, 18.0, 21.0, 24.0, 60))
+
+    # A genuinely in-retention hour whose backlog SHOULD still be folded, so the
+    # clamp cannot be "just stop folding old data" — the catch-up must work.
+    fresh_hour = cutoff + 3 * 86400
+    fresh_hour -= fresh_hour % 3600
+    for m in (10, 40):
+        db.write_climate_tick(fresh_hour + m, [
+            {"source": "sensor", "series": series, "metric": "temp_c",
+             "value": 70.0 + m, "label": "Outage Probe"}], [])
+
+    db.roll_up_climate(now=now)
+
+    old_pt = next(s for s in db.get_climate(old_hour, old_hour + 3599, "hourly")["series"]
+                  if s["series"] == series)["points"][0]
+    assert old_pt == {"at": old_hour, "avg": 21.0, "min": 18.0, "max": 24.0}, \
+        f"out-of-retention aggregate was clobbered by a stray sample: {old_pt}"
+    fresh_pts = next(s for s in db.get_climate(fresh_hour, fresh_hour + 3599, "hourly")["series"]
+                     if s["series"] == series)["points"]
+    assert fresh_pts and fresh_pts[0]["min"] == 80.0 and fresh_pts[0]["max"] == 110.0, \
+        f"in-retention backlog was not folded after the outage: {fresh_pts}"
+    print("  ✓ a lagging watermark folds its backlog without clobbering history")
+
+
 def test_auto_resolution_picks_hourly_for_long_windows(db) -> None:
     """A week of raw is a quarter of a million points; nothing benefits."""
     assert db.get_climate(0, 2 * 86400, "auto")["resolution"] == "raw"
@@ -630,6 +688,7 @@ def main() -> None:
         test_rollup_excludes_the_hour_in_progress,
         test_rollup_is_incremental_but_accepts_recent_late_samples,
         test_too_late_sample_cannot_replace_a_durable_hour,
+        test_lagging_watermark_after_outage_does_not_clobber_history,
         test_prune_drops_raw_but_never_rollups,
         test_auto_resolution_picks_hourly_for_long_windows,
         test_outdoor_sensor_is_filed_apart_from_the_room,

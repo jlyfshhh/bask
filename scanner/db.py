@@ -498,30 +498,35 @@ def roll_up_climate(now: int | None = None) -> int:
                 min_value=excluded.min_value, avg_value=excluded.avg_value,
                 max_value=excluded.max_value, samples=excluded.samples
             """
-        conn.execute(rollup_sql, (roll_from, current_hour))
+        # Recompute only hours still inside raw retention. When the watermark
+        # lags far behind — an outage, a stopped container, a restored backup —
+        # `roll_from` reaches back to fold the backlog, but DO UPDATE must never
+        # cross below `cutoff`: down there the raw is being pruned this pass, so
+        # a lone surviving sample is a stray, not a correction, and recomputing
+        # from it would overwrite a complete hour that rolled up before its raw
+        # was discarded. Clamp the lower bound to the retention edge.
+        conn.execute(rollup_sql, (max(roll_from, cutoff), current_hour))
 
-        # A clock correction, restored database, or pre-watermark installation
-        # can leave a raw row behind the incremental window. Never prune such a
-        # row before folding it. If that hour already has a durable aggregate,
-        # however, the bounded correction window has closed: replacing a full
-        # hour with one very-late raw sample would corrupt history, so preserve
-        # the existing row. This range is normally empty and uses the
-        # recorded_at-leading primary key, so it does not reintroduce the full-
-        # retention scan that the watermark removes.
-        if cutoff < roll_from:
-            conn.execute(
-                """
-                INSERT INTO climate_hourly
-                    (hour, series_id, min_value, avg_value, max_value, samples)
-                SELECT recorded_at - (recorded_at % 3600) AS hour,
-                       series_id, MIN(value), AVG(value), MAX(value), COUNT(*)
-                  FROM climate_samples
-                 WHERE recorded_at >= ? AND recorded_at < ?
-                 GROUP BY hour, series_id
-                ON CONFLICT(hour, series_id) DO NOTHING
-                """,
-                (0, cutoff),
-            )
+        # Out-of-retention hours are folded by a separate pass that never
+        # overwrites. It catches a delayed backlog after an outage, a
+        # pre-watermark migration, or a clock correction, but preserves any
+        # durable aggregate that already exists — a very-late raw sample must
+        # not replace a full hour. This range is normally empty (the prune below
+        # clears it) and uses the recorded_at-leading primary key, so it does
+        # not reintroduce the full-retention scan the watermark removes.
+        conn.execute(
+            """
+            INSERT INTO climate_hourly
+                (hour, series_id, min_value, avg_value, max_value, samples)
+            SELECT recorded_at - (recorded_at % 3600) AS hour,
+                   series_id, MIN(value), AVG(value), MAX(value), COUNT(*)
+              FROM climate_samples
+             WHERE recorded_at >= ? AND recorded_at < ?
+             GROUP BY hour, series_id
+            ON CONFLICT(hour, series_id) DO NOTHING
+            """,
+            (0, cutoff),
+        )
         conn.execute(
             "INSERT INTO climate_rollup_state (singleton, through_hour) VALUES (1, ?) "
             "ON CONFLICT(singleton) DO UPDATE SET through_hour=MAX(through_hour, excluded.through_hour)",
