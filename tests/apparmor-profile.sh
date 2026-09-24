@@ -79,4 +79,48 @@ if probe docker-default | grep -q "org.freedesktop.DBus"; then
 fi
 echo "  docker-default is still denied, so the profile is doing the work"
 
+# ListNames only proves the bus *driver* is reachable. The scanner's real work
+# is with BlueZ — org.bluez, a different destination AppArmor mediates
+# separately — so a profile could pass every check above and still deny the one
+# peer that matters. Address org.bluez directly.
+#
+# This stays hardware-independent: with no Bluetooth adapter org.bluez has no
+# owner, and the bus answers ServiceUnknown/NameHasNoOwner. That still proves
+# the send was *permitted* — the refusal came from the bus, not from AppArmor.
+# Only an AppArmor denial (or a blocked Hello, which fails the whole connection)
+# is a failure.
+bluez_probe() {
+  docker run --rm --security-opt "apparmor=$1" --network none \
+    -v /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket:ro \
+    -e DBUS_SYSTEM_BUS_ADDRESS=unix:path=/var/run/dbus/system_bus_socket \
+    "$probe_image" \
+    dbus-send --system --dest=org.bluez --print-reply \
+      /org/bluez org.freedesktop.DBus.Introspectable.Introspect 2>&1 || true
+}
+
+# AppArmor's D-Bus refusals name AppArmor in the message, on the send itself
+# ("An AppArmor policy prevents this sender...") and on the Hello that opens the
+# connection ("Failed to open connection ... AppArmor"). A bus-level
+# ServiceUnknown/NameHasNoOwner does not, and means the send was allowed. Match
+# AppArmor specifically so an unrelated D-Bus policy quirk is not read as one.
+denied='AppArmor'
+
+if bluez_probe bask-scanner | grep -Eq "$denied"; then
+  echo "The profile blocks org.bluez, the destination the scanner actually uses." >&2
+  bluez_probe bask-scanner | tail -5 >&2
+  exit 1
+fi
+echo "  the profile reaches org.bluez itself, not just the bus driver"
+
+# docker-default cannot even greet the bus (asserted above), so a container
+# under it certainly cannot reach org.bluez. If that send is somehow allowed,
+# AppArmor is not mediating destinations here and the BlueZ check above proved
+# nothing — fail rather than pass for the wrong reason.
+if ! bluez_probe docker-default | grep -Eq "$denied"; then
+  echo "docker-default was not denied for org.bluez; AppArmor is not mediating this path." >&2
+  bluez_probe docker-default | tail -5 >&2
+  exit 1
+fi
+echo "  docker-default is denied org.bluez, so the profile's BlueZ rule is what allows it"
+
 echo "AppArmor profile tests passed."
