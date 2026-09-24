@@ -126,6 +126,48 @@ def test_a_sustained_heating_fault_still_reports_within_the_hour():
     assert not ok and fraction > 0.5
 
 
+def test_a_changed_band_resets_the_window_not_judges_old_samples_by_it():
+    """Day flipping to night must not flag correctly-warm daytime samples as too
+    hot the instant the cooler night band applies."""
+    w = RangeWindow()
+    DAY = (84, 92)      # warm side, daytime
+    NIGHT = (70, 78)    # warm side, night
+    # A full hour correctly in the daytime band.
+    now = fill(w, "aa", [88.0] * 60)
+    ok_day, frac_day, n_day = w.evaluate("aa", 88.0, *DAY, now)
+    assert ok_day and n_day >= MIN_SAMPLES
+
+    # Night limits now apply. Those 88F samples are out of the night band, but
+    # they were gathered under the day band and must not trip an alert now.
+    ok_night, frac_night, n_night = w.evaluate("aa", 76.0, *NIGHT, now + 1)
+    assert ok_night, "old-band samples were judged against the new band"
+    assert frac_night == 0.0
+    assert n_night < MIN_SAMPLES, "window should have reset to fall back on the live reading"
+
+
+def test_a_reset_window_still_catches_a_sustained_fault_under_the_new_band():
+    """The reset must not mute a real problem: once the window refills under the
+    new band, a sustained out-of-range reading still alerts."""
+    w = RangeWindow()
+    w.evaluate("bb", 88.0, 84, 92, 0.0)      # day policy established
+    # Night now applies: the first night cycle resets the window, then the
+    # enclosure never cools, so cycle after cycle records 88F under the stable
+    # night band until the window is full.
+    w.evaluate("bb", 88.0, 70, 78, 60.0)     # night policy established (reset)
+    now = fill(w, "bb", [88.0] * 60, start=120.0)
+    ok, frac, n = w.evaluate("bb", 88.0, 70, 78, now)
+    assert n >= MIN_SAMPLES and not ok and frac > 0.5
+
+
+def test_re_evaluating_the_same_band_keeps_the_window():
+    """A steady policy must not reset every cycle, or the window never fills."""
+    w = RangeWindow()
+    now = fill(w, "cc", [50.0] * 60)
+    w.evaluate("cc", 50.0, 40, 60, now)
+    _ok, _frac, n = w.evaluate("cc", 50.0, 40, 60, now + 1)
+    assert n >= MIN_SAMPLES, "an unchanged band should not clear the window"
+
+
 def test_the_temperature_window_is_shorter_than_the_humidity_one():
     assert TEMPERATURE_WINDOW_SECONDS < 3 * 3600
 

@@ -42,6 +42,10 @@ class RangeWindow:
     def __init__(self, window_seconds: int = HUMIDITY_WINDOW_SECONDS):
         self._window = window_seconds
         self._by_mac: dict[str, deque] = {}
+        # The acceptable band last used to judge each sensor. When it changes,
+        # the samples behind it belong to a different policy and must not be
+        # weighed against the new one.
+        self._policy: dict[str, tuple] = {}
 
     def record(self, mac: str, value: float | None, now: float) -> None:
         if value is None:
@@ -54,6 +58,7 @@ class RangeWindow:
 
     def forget(self, mac: str) -> None:
         self._by_mac.pop(mac, None)
+        self._policy.pop(mac, None)
 
     def samples(self, mac: str, now: float) -> list[float]:
         samples = self._by_mac.get(mac)
@@ -68,7 +73,21 @@ class RangeWindow:
         Falls back to the latest reading while the window is still filling, so
         this can never be quieter than the snapshot test it replaces on a
         sensor that has only just started reporting.
+
+        When the acceptable band changes — day flips to night, the enclosure's
+        species is reassigned, or a range is edited — the window is reset so the
+        old policy's samples are not judged against the new one. Otherwise a
+        correctly warm daytime reading would be flagged "too hot" the instant the
+        cooler night limits applied, from data gathered when they did not. After
+        a reset the window refills under the new band, snapshotting the live
+        reading in the meantime.
         """
+        policy = (low, high)
+        previous = self._policy.get(mac)
+        if previous is not None and previous != policy:
+            self._by_mac.pop(mac, None)
+        self._policy[mac] = policy
+
         values = self.samples(mac, now)
         if len(values) < MIN_SAMPLES:
             if latest is None:
