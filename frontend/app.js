@@ -1009,6 +1009,8 @@ function editSensor(mac) {
     <div class="sheet-head"><h2>Edit sensor</h2><button class="close-btn" onclick="closeEditor()" aria-label="Close editor">✕</button></div>
     <div class="field"><label>Name</label><input type="text" id="sf-name" value="${esc(s.name)}"></div>
     <div class="field"><label>Species (optional label)</label><input type="text" id="sf-species" value="${esc(s.species || "")}"></div>
+    <label class="field-check"><input type="checkbox" id="sf-outdoor" ${s.role === "outdoor" ? "checked" : ""}>
+      <span>Outdoor reference sensor<small>Filed as the outside reading, kept out of enclosures and room averages.</small></span></label>
     <div class="row-mac" style="margin-bottom:14px">${esc(s.mac)}</div>
     <div class="form-actions">
       <button class="btn danger" onclick="deleteSensor('${idAttr(s.mac)}')">Delete</button>
@@ -1018,7 +1020,10 @@ async function saveSensor(mac) {
   const name = document.getElementById("sf-name").value.trim();
   if (!name) return;
   const species = document.getElementById("sf-species").value.trim() || null;
-  await api("PUT", `/api/sensors/${mac}`, { name, species });
+  // Always send role from the editor (the one place it is set), so unchecking
+  // clears it; the field is in model_fields_set only because we send it.
+  const role = document.getElementById("sf-outdoor").checked ? "outdoor" : null;
+  await api("PUT", `/api/sensors/${mac}`, { name, species, role });
   closeEditor(); await loadManageData();
 }
 async function deleteSensor(mac) {

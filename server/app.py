@@ -2213,7 +2213,12 @@ def _validate_import(data: dict) -> dict:
     out = {}
     out["sensors"] = [
         {"mac": _clean_str(s.get("mac")).upper(), "name": _clean_str(s.get("name"), "sensor"),
-         "species": _clean_str(s.get("species"), None) if s.get("species") is not None else None}
+         "species": _clean_str(s.get("species"), None) if s.get("species") is not None else None,
+         # Only "outdoor" is a real role; anything else is dropped, matching the
+         # live SensorRole model. Without carrying it, restoring a settings file
+         # demotes the outdoor reference sensor to a room sensor and the climate
+         # log loses the outside baseline it measures everything else against.
+         **({"role": "outdoor"} if s.get("role") == "outdoor" else {})}
         for s in data.get("sensors", []) if isinstance(s, dict) and s.get("mac")]
     out["sensors"] = [sensor for sensor in out["sensors"] if sensor["mac"]]
     _reject_duplicate_values((sensor["mac"] for sensor in out["sensors"]), "sensor MAC")
@@ -2338,7 +2343,10 @@ def _portable_export(cfg: dict) -> dict:
     """
     out: dict[str, Any] = {
         "sensors": [
-            {"mac": s.get("mac"), "name": s.get("name"), "species": s.get("species")}
+            {"mac": s.get("mac"), "name": s.get("name"), "species": s.get("species"),
+             # Carry the outdoor role so a restore keeps the reference sensor as
+             # a reference; a room sensor simply has no role to export.
+             **({"role": "outdoor"} if s.get("role") == "outdoor" else {})}
             for s in cfg.get("sensors", []) if isinstance(s, dict)
         ],
         "enclosures": cfg.get("enclosures", []),

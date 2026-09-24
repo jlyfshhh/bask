@@ -547,6 +547,10 @@ a.btn { text-decoration: none; }
   color: var(--text); font-size: 1.05rem;
 }
 .field input:focus, .field select:focus { outline: none; border-color: var(--accent); }
+.field-check { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 16px; cursor: pointer; }
+.field-check input[type=checkbox] { width: 20px; height: 20px; margin-top: 2px; flex: 0 0 auto; accent-color: var(--accent); }
+.field-check span { font-size: 0.95rem; font-weight: 600; color: var(--text); }
+.field-check small { display: block; font-weight: 400; color: var(--muted); font-size: 0.82rem; margin-top: 2px; }
 
 /* +/- numeric stepper for ranges (keyboard-free) */
 .stepper { display: flex; align-items: center; gap: 12px; }

@@ -37,6 +37,34 @@ def test_a_sound_file_is_accepted():
     assert out["sensors"][0]["mac"] == "A4:C1:38:00:00:01"
 
 
+def test_outdoor_role_survives_export_and_restore():
+    """An outdoor reference sensor must not be demoted to a room sensor by a
+    round trip. Dropping the role silently corrupts the climate log's outside
+    baseline, which every in-room reading is judged against."""
+    cfg = {
+        "sensors": [
+            {"mac": "A4:C1:38:00:00:01", "name": "Porch", "role": "outdoor"},
+            {"mac": "A4:C1:38:00:00:02", "name": "Warm Side"},
+        ],
+        "enclosures": [{"id": "e1", "name": "Tank", "sensors": []}],
+        "species": [{"id": "s1", "name": "Ball Python", "warm_temp_min": 88}],
+    }
+    restored = _validate_import(_portable_export(cfg))
+    by_mac = {s["mac"]: s for s in restored["sensors"]}
+    assert by_mac["A4:C1:38:00:00:01"].get("role") == "outdoor", "outdoor role lost in round trip"
+    assert "role" not in by_mac["A4:C1:38:00:00:02"], "a room sensor should carry no role"
+
+
+def test_a_bogus_sensor_role_is_dropped_not_trusted():
+    """Only 'outdoor' is a real role; import must not carry an arbitrary value
+    through onto the config the dashboard then reads."""
+    out = _validate_import({
+        **BASE,
+        "sensors": [{"mac": "A4:C1:38:00:00:09", "name": "Odd", "role": "warm"}],
+    })
+    assert "role" not in out["sensors"][0]
+
+
 def test_current_example_ranges_survive_export_and_restore():
     """Use the shipped schema, not a second hand-written mock of old fields."""
     current = json.loads((ROOT / "config.example.json").read_text())
