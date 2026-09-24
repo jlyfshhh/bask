@@ -101,12 +101,23 @@ snapshot), migrates the settings and history, and starts the container.
 
 ### Manual Docker install
 
-Prefer to set it up yourself? With Docker Engine and the Compose plugin installed:
+The one-line installer above is the supported path — it sets ownership, loads
+the scanner's AppArmor profile, and validates each release before switching to
+it. Set it up by hand only if you want to; the two steps that matter are getting
+the shared data directory's ownership right and, on Ubuntu-family hosts, loading
+the AppArmor profile. Miss the first and the root scanner wins the first-start
+race and writes root-owned files the non-root web service cannot read.
+
+With Docker Engine and the Compose plugin installed:
 
 ```bash
 mkdir -p ~/bask && cd ~/bask
 curl -fsSLO https://raw.githubusercontent.com/jlyfshhh/bask/main/compose.yaml
 curl -fsSL https://raw.githubusercontent.com/jlyfshhh/bask/main/.env.example -o .env
+# Run the web service as you, so it — not the root scanner — creates the shared
+# files in a directory you own. The scanner stays root (BlueZ requires it) and
+# writes into those files through CAP_DAC_OVERRIDE.
+sed -i "s/^BASK_UID=.*/BASK_UID=$(id -u)/; s/^BASK_GID=.*/BASK_GID=$(id -g)/" .env
 mkdir -p data backups
 docker compose up -d
 ```
@@ -125,6 +136,19 @@ On Linux, enable BlueZ's reliable passive scanning mode once:
 sudo sed -i 's/^#*Experimental = .*/Experimental = true/' /etc/bluetooth/main.conf
 sudo systemctl restart bluetooth
 sudo apt install -y avahi-daemon bluez rfkill
+```
+
+On an Ubuntu-family host, AppArmor mediates D-Bus, and the `docker-default`
+profile does not mention it, so the scanner's first call to BlueZ is denied and
+no readings arrive. Load the shipped profile once and point the scanner at it —
+Debian and Raspberry Pi OS do not need this:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jlyfshhh/bask/main/deploy/apparmor/bask-scanner \
+  | sudo tee /etc/apparmor.d/bask-scanner >/dev/null
+sudo apparmor_parser -r /etc/apparmor.d/bask-scanner
+echo 'BASK_SCANNER_APPARMOR=bask-scanner' >> .env
+docker compose up -d
 ```
 
 Then open `http://<hostname>.local:8080` (or `http://<host-ip>:8080`) in any browser, and tap **⚙ Manage → Sensors → Pair by proximity** to add your sensors.
