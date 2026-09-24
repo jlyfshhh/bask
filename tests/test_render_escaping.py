@@ -186,7 +186,7 @@ def test_viewport_keeps_browser_zoom_available_and_shell_cache_is_bumped():
     assert "user-scalable=no" not in content
     asset_versions = re.findall(r'(?:style\.css|app\.js)\?v=([^"\']+)', html)
     assert len(asset_versions) == 2 and len(set(asset_versions)) == 1
-    assert 'const CACHE = "bask-v6"' in SERVICE_WORKER.read_text(encoding="utf-8")
+    assert 'const CACHE = "bask-v7"' in SERVICE_WORKER.read_text(encoding="utf-8")
 
 
 def test_every_icon_only_dialog_close_button_has_a_name():
