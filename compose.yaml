@@ -35,11 +35,29 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ${BASK_DATA_PATH:-./data}:/data
+    # /api/health runs db.init_db(), so once the web is healthy it — running as
+    # the non-root user — has created config.json and the WAL readings.db and
+    # owns them. The scanner waits for that (below), so the root scanner can
+    # never win the first-start race and leave root-owned files the web cannot
+    # read. python because the read-only image ships no curl.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/api/health', timeout=4).status == 200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
 
   bask-scanner:
     image: ghcr.io/jlyfshhh/bask:${BASK_TAG:-latest}
     container_name: bask-scanner
     restart: unless-stopped
+    # Wait for the web service to be healthy before starting. That guarantees
+    # the non-root web has already initialized the shared /data files, so this
+    # root process only ever opens files the web owns rather than creating
+    # root-owned ones the web then cannot read.
+    depends_on:
+      bask:
+        condition: service_healthy
     logging:
       driver: json-file
       options:
