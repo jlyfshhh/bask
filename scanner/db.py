@@ -465,6 +465,14 @@ def roll_up_climate(now: int | None = None) -> int:
     now = int(time.time()) if now is None else int(now)
     current_hour = now - (now % 3600)
     cutoff = now - RAW_RETENTION_DAYS * 86400
+    # The hour that *contains* cutoff is only partly inside retention: the prune
+    # below deletes its samples before cutoff and keeps the tail after it. So
+    # DO UPDATE must not touch that hour either — recomputing it from the
+    # surviving tail would replace its complete aggregate with the fragment.
+    # Round cutoff up to the next whole hour as the safe boundary for updates;
+    # everything below it is folded only by the never-overwriting pass, which
+    # runs before the prune and so still sees the hour's full set of raw.
+    safe_update_from = -(-cutoff // 3600) * 3600
     with get_conn() as conn:
         state = conn.execute(
             "SELECT through_hour FROM climate_rollup_state WHERE singleton=1"
@@ -498,22 +506,23 @@ def roll_up_climate(now: int | None = None) -> int:
                 min_value=excluded.min_value, avg_value=excluded.avg_value,
                 max_value=excluded.max_value, samples=excluded.samples
             """
-        # Recompute only hours still inside raw retention. When the watermark
-        # lags far behind — an outage, a stopped container, a restored backup —
-        # `roll_from` reaches back to fold the backlog, but DO UPDATE must never
-        # cross below `cutoff`: down there the raw is being pruned this pass, so
-        # a lone surviving sample is a stray, not a correction, and recomputing
-        # from it would overwrite a complete hour that rolled up before its raw
-        # was discarded. Clamp the lower bound to the retention edge.
-        conn.execute(rollup_sql, (max(roll_from, cutoff), current_hour))
+        # Recompute only whole hours still inside raw retention. When the
+        # watermark lags far behind — an outage, a stopped container, a restored
+        # backup — `roll_from` reaches back to fold the backlog, but DO UPDATE
+        # must never cross below the safe boundary: below it the raw is being
+        # pruned this pass (or is only a partial tail of the cutoff hour), so
+        # recomputing from what survives would overwrite a complete hour that
+        # rolled up before its raw was discarded. Clamp to the aligned edge.
+        conn.execute(rollup_sql, (max(roll_from, safe_update_from), current_hour))
 
-        # Out-of-retention hours are folded by a separate pass that never
+        # Everything below the safe boundary — the out-of-retention hours and
+        # the partial cutoff hour — is folded by a separate pass that never
         # overwrites. It catches a delayed backlog after an outage, a
-        # pre-watermark migration, or a clock correction, but preserves any
-        # durable aggregate that already exists — a very-late raw sample must
-        # not replace a full hour. This range is normally empty (the prune below
-        # clears it) and uses the recorded_at-leading primary key, so it does
-        # not reintroduce the full-retention scan the watermark removes.
+        # pre-watermark migration, or a clock correction, and because it runs
+        # before the prune it still sees the cutoff hour's full set of raw, so a
+        # missing aggregate is inserted complete; an existing one is preserved
+        # against a very-late sample. Normally near-empty and PK-bounded, so it
+        # does not reintroduce the full-retention scan the watermark removes.
         conn.execute(
             """
             INSERT INTO climate_hourly
@@ -525,7 +534,7 @@ def roll_up_climate(now: int | None = None) -> int:
              GROUP BY hour, series_id
             ON CONFLICT(hour, series_id) DO NOTHING
             """,
-            (0, cutoff),
+            (0, safe_update_from),
         )
         conn.execute(
             "INSERT INTO climate_rollup_state (singleton, through_hour) VALUES (1, ?) "

@@ -219,6 +219,67 @@ def test_too_late_sample_cannot_replace_a_durable_hour(db) -> None:
     print("  ✓ too-late sample cannot replace a durable hourly aggregate")
 
 
+def test_partial_cutoff_hour_keeps_its_complete_aggregate(db) -> None:
+    """The hour containing the retention cutoff is half pruned, half kept. Its
+    complete aggregate must survive a lagging-watermark pass, not be replaced by
+    the fragment of raw that outlives the prune. Fixed clock, per Codex."""
+    now = 1800000123
+    cutoff = now - db.RAW_RETENTION_DAYS * 86400   # 1798790523, 123s into its hour
+    cutoff_hour = cutoff - (cutoff % 3600)
+    series = "ROLLUP:CUTOFF-KEEP"
+    # A lone raw sample surviving in the cutoff hour, after the cutoff second.
+    db.write_climate_tick(cutoff + 60, [
+        {"source": "sensor", "series": series, "metric": "temp_c",
+         "value": 99.0, "label": "Cutoff Probe"}], [])
+    with db.get_conn() as conn:
+        sid = conn.execute("SELECT id FROM climate_series WHERE series=?", (series,)).fetchone()[0]
+        conn.execute("INSERT INTO climate_hourly VALUES (?, ?, ?, ?, ?, ?)",
+                     (cutoff_hour, sid, 18.0, 21.0, 24.0, 60))
+        # Watermark far behind, so roll_from reaches below the cutoff hour.
+        conn.execute("INSERT INTO climate_rollup_state (singleton, through_hour) VALUES (1, ?) "
+                     "ON CONFLICT(singleton) DO UPDATE SET through_hour=excluded.through_hour",
+                     (cutoff_hour - 10 * 3600,))
+
+    db.roll_up_climate(now=now)
+
+    point = next(s for s in db.get_climate(cutoff_hour, cutoff_hour + 3599, "hourly")["series"]
+                 if s["series"] == series)["points"][0]
+    assert point == {"at": cutoff_hour, "avg": 21.0, "min": 18.0, "max": 24.0}, point
+
+
+def test_partial_cutoff_hour_with_no_aggregate_is_inserted_before_pruning(db) -> None:
+    """If the cutoff hour has no aggregate yet, the never-overwriting pass runs
+    before the prune, so it captures the whole hour — both the samples about to
+    be pruned and the surviving tail — not just the tail. Fixed clock."""
+    now = 1800000123
+    cutoff = now - db.RAW_RETENTION_DAYS * 86400
+    cutoff_hour = cutoff - (cutoff % 3600)
+    series = "ROLLUP:CUTOFF-INSERT"
+    # One sample before the cutoff second (pruned) and one after (kept).
+    db.write_climate_tick(cutoff - 60, [
+        {"source": "sensor", "series": series, "metric": "temp_c",
+         "value": 20.0, "label": "Cutoff Probe"}], [])
+    db.write_climate_tick(cutoff + 60, [
+        {"source": "sensor", "series": series, "metric": "temp_c",
+         "value": 22.0, "label": "Cutoff Probe"}], [])
+    with db.get_conn() as conn:
+        conn.execute("INSERT INTO climate_rollup_state (singleton, through_hour) VALUES (1, ?) "
+                     "ON CONFLICT(singleton) DO UPDATE SET through_hour=excluded.through_hour",
+                     (cutoff_hour - 10 * 3600,))
+
+    db.roll_up_climate(now=now)
+
+    point = next(s for s in db.get_climate(cutoff_hour, cutoff_hour + 3599, "hourly")["series"]
+                 if s["series"] == series)["points"][0]
+    # Both samples captured (min 20, max 22), not just the surviving 22.
+    assert point == {"at": cutoff_hour, "avg": 21.0, "min": 20.0, "max": 22.0}, point
+    with db.get_conn() as conn:
+        remaining = conn.execute(
+            "SELECT COUNT(*) FROM climate_samples s JOIN climate_series c ON c.id=s.series_id "
+            "WHERE c.series=? AND s.recorded_at < ?", (series, cutoff)).fetchone()[0]
+    assert remaining == 0, "the pre-cutoff raw should have been pruned"
+
+
 def test_prune_drops_raw_but_never_rollups(db) -> None:
     """Raw is bounded so the SD card survives; the rollup is the long memory and
     must outlive it."""
@@ -689,6 +750,8 @@ def main() -> None:
         test_rollup_is_incremental_but_accepts_recent_late_samples,
         test_too_late_sample_cannot_replace_a_durable_hour,
         test_lagging_watermark_after_outage_does_not_clobber_history,
+        test_partial_cutoff_hour_keeps_its_complete_aggregate,
+        test_partial_cutoff_hour_with_no_aggregate_is_inserted_before_pruning,
         test_prune_drops_raw_but_never_rollups,
         test_auto_resolution_picks_hourly_for_long_windows,
         test_outdoor_sensor_is_filed_apart_from_the_room,
