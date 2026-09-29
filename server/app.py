@@ -1538,6 +1538,26 @@ def add_sensor(payload: SensorPayload, _: None = Keeper, revision: int = ConfigW
     return {"ok": True}
 
 
+def enforce_single_outdoor(cfg: dict, outdoor_mac: str) -> None:
+    """Make one sensor the sole outdoor reference and nothing else.
+
+    The outdoor sensor is the *independent* outside reading, so it must not also
+    drive an enclosure — leave it in a slot and its weather is averaged into that
+    habitat. And the dashboard renders a single reference, so a second one would
+    be invisible. So marking a sensor outdoor unassigns it from every enclosure
+    and clears the role from any other sensor.
+    """
+    up = outdoor_mac.upper()
+    for enclosure in cfg.get("enclosures", []):
+        enclosure["sensors"] = [slot for slot in enclosure.get("sensors", [])
+                                if (slot.get("mac") or "").upper() != up]
+    for sensor in cfg.get("sensors", []):
+        if (sensor.get("mac") or "").upper() == up:
+            sensor["role"] = "outdoor"
+        else:
+            sensor.pop("role", None)
+
+
 @app.put("/api/sensors/{mac}")
 def update_sensor(mac: str, payload: SensorUpdate, _: None = Keeper,
                   revision: int = ConfigWrite):
@@ -1554,7 +1574,7 @@ def update_sensor(mac: str, payload: SensorUpdate, _: None = Keeper,
                 # reappearing in the room average weeks later.
                 if "role" in payload.model_fields_set:
                     if payload.role:
-                        sensor["role"] = payload.role
+                        enforce_single_outdoor(cfg, sensor["mac"])
                     else:
                         sensor.pop("role", None)
                 return
@@ -2307,6 +2327,19 @@ def _validate_import(data: dict) -> dict:
                 ip=host, temp_unit=t.get("temp_unit")
             ).temp_unit or out.get("settings", {}).get("temp_unit", "F"),
         })
+    # Same one-outdoor-reference invariant the live PUT enforces: a restored
+    # file cannot smuggle in several references, or an outdoor sensor that also
+    # drives an enclosure. Keep the first outdoor sensor, clear the rest, and
+    # unassign the survivor from any enclosure slot.
+    outdoor = [sensor for sensor in out["sensors"] if sensor.get("role") == "outdoor"]
+    for extra in outdoor[1:]:
+        extra.pop("role", None)
+    if outdoor:
+        keep = outdoor[0]["mac"].upper()
+        for enclosure in out["enclosures"]:
+            enclosure["sensors"] = [slot for slot in enclosure["sensors"]
+                                    if slot["mac"].upper() != keep]
+
     if not (out["sensors"] or out["enclosures"] or out["species"]):
         raise ValueError("no recognizable Bask settings in this file")
     return out

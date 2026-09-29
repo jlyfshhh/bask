@@ -6,7 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
-from server.app import _portable_export, _validate_import, validated_lan_host  # noqa: E402
+from server.app import _portable_export, _validate_import, validated_lan_host, enforce_single_outdoor  # noqa: E402
 
 RANGE_FIELDS = (
     "warm_temp_min", "warm_temp_max", "cool_temp_min", "cool_temp_max",
@@ -35,6 +35,46 @@ def test_a_sound_file_is_accepted():
     out = _validate_import(dict(BASE))
     assert out["species"][0]["warm_temp_min"] == 88
     assert out["sensors"][0]["mac"] == "A4:C1:38:00:00:01"
+
+
+def test_making_a_sensor_outdoor_unassigns_it_and_is_the_only_reference():
+    """An outdoor sensor is the outside baseline: it must not also drive an
+    enclosure, and there can be only one. enforce_single_outdoor is what the
+    live PUT calls when the keeper ticks the box."""
+    cfg = {
+        "sensors": [
+            {"mac": "A4:C1:38:00:00:01", "name": "Porch"},
+            {"mac": "A4:C1:38:00:00:02", "name": "Old Outdoor", "role": "outdoor"},
+        ],
+        "enclosures": [
+            {"id": "e1", "name": "Tank", "sensors": [
+                {"mac": "A4:C1:38:00:00:01", "position": "Cool Side"},
+                {"mac": "A4:C1:38:00:00:09", "position": "Warm Side"}]},
+        ],
+    }
+    enforce_single_outdoor(cfg, "A4:C1:38:00:00:01")
+    by_mac = {sensor["mac"]: sensor for sensor in cfg["sensors"]}
+    assert by_mac["A4:C1:38:00:00:01"].get("role") == "outdoor"
+    assert "role" not in by_mac["A4:C1:38:00:00:02"], "the previous outdoor sensor must be demoted"
+    slots = [slot["mac"] for slot in cfg["enclosures"][0]["sensors"]]
+    assert "A4:C1:38:00:00:01" not in slots, "the outdoor sensor must leave the enclosure"
+    assert "A4:C1:38:00:00:09" in slots, "the enclosure's other sensor stays"
+
+
+def test_import_keeps_one_outdoor_reference_and_unassigns_it():
+    out = _validate_import({
+        "sensors": [
+            {"mac": "A4:C1:38:00:00:01", "name": "Porch", "role": "outdoor"},
+            {"mac": "A4:C1:38:00:00:02", "name": "Balcony", "role": "outdoor"},
+        ],
+        "enclosures": [{"id": "e1", "name": "Tank", "sensors": [
+            {"mac": "A4:C1:38:00:00:01", "position": "Cool Side"}]}],
+        "species": [{"id": "s1", "name": "Ball Python", "warm_temp_min": 88}],
+    })
+    outdoor = [s for s in out["sensors"] if s.get("role") == "outdoor"]
+    assert len(outdoor) == 1, "only one outdoor reference may survive import"
+    assert outdoor[0]["mac"] == "A4:C1:38:00:00:01"
+    assert out["enclosures"][0]["sensors"] == [], "the outdoor sensor is unassigned on import"
 
 
 def test_outdoor_role_survives_export_and_restore():
