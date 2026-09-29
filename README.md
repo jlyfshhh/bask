@@ -12,7 +12,7 @@
   <img alt="Python" src="https://img.shields.io/badge/python-3.11%2B-blue">
   <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-Docker-A8B7A1">
   <a href="https://animalroom.app/bask/"><img alt="Website" src="https://img.shields.io/badge/website-animalroom.app%2Fbask-E39A13"></a>
-  <a href="https://ko-fi.com/jlyfshhh"><img alt="Ko-fi" src="https://img.shields.io/badge/Ko--fi-buy%20crickets-FF5E5B?logo=ko-fi&logoColor=white"></a>
+  <a href="https://ko-fi.com/jlyfshhh"><img alt="Support Animal Room on Ko-fi" src="https://img.shields.io/badge/Ko--fi-support%20Animal%20Room-FF5E5B?logo=ko-fi&logoColor=white"></a>
 </p>
 
 ---
@@ -42,6 +42,7 @@ account, or ongoing internet connection.
 - 💧 **Animal-room humidifier** *(optional)* — connect a Levoit Classic 300S through VeSync and see live humidity, power, mode, target, mist level, and low-water status without giving Bask control of the device.
 - 📲 **Phone alerts** *(optional)* — get a notification on your phone when an enclosure goes out of range or a sensor drops off. Two-minute setup with the free [ntfy](https://ntfy.sh) app; the Pi only sends outbound, so nothing is exposed.
 - 📱 **Installs like an app** — add Bask to your phone or tablet's home screen and it launches fullscreen with its own icon, like a native app.
+- 📸 **Privacy-safe room updates** — make a shareable status image without uploading anything. Enclosure names are hidden unless you explicitly include them; readings, sensor IDs, network details, credentials, and history never appear.
 - 👆 **Touch-first UI** — built for a wall-mounted touchscreen, with proximity pairing (hold a sensor near the host to add it).
 - 🪶 **Tiny footprint** — two small Python processes and a vanilla-JS frontend. No build step, no framework, no database server.
 
@@ -324,12 +325,15 @@ either can still work independently and each keeps its own portable data.
 Choose Bask, Shed, or the combined Haven setup from the
 **[Haven installer](https://github.com/jlyfshhh/animal-room)**.
 
-## 🦗 Buy the animals some crickets
+## Support Animal Room
 
-Bask is free and always will be, but if it saved one of your animals a rough night, or you just think it's neat, you can chip in a couple bucks toward the cricket fund.
+Bask is free, open source, local-first, and has no telemetry. If it has helped
+your animals—or you simply want to keep the project growing—a tip helps cover
+test sensors, Raspberry Pi hardware, the domain, and compatibility work. Nothing
+is locked behind payment.
 
 <p align="center">
-  <a href="https://ko-fi.com/jlyfshhh"><img height="40" alt="Buy the animals crickets on Ko-fi" src="https://img.shields.io/badge/Ko--fi-Buy%20the%20animals%20crickets-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white"></a>
+  <a href="https://ko-fi.com/jlyfshhh"><img height="40" alt="Support Animal Room on Ko-fi" src="https://img.shields.io/badge/Ko--fi-Support%20Animal%20Room-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white"></a>
 </p>
 
 ## License

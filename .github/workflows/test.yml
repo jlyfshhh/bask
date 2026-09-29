@@ -74,5 +74,6 @@ jobs:
           node tests/test_frontend_concurrency.js
           node tests/test_accessibility.js
           node tests/test_solar_settings.js
+          node tests/test_share_card.js
       - name: Container build
         run: docker build -t bask:test .

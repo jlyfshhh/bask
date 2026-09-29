@@ -79,6 +79,70 @@ def main() -> None:
         uuid.UUID(made_enclosure.json()["id"])
         assert int(made_enclosure.headers["X-Bask-Revision"]) == after_species + 1
 
+        # An outdoor reference is an independent baseline, never an enclosure
+        # input. Reject both enclosure-form writes and proximity-pairing calls
+        # without demoting the role or partially changing the enclosure.
+        outdoor = load_config()["sensors"][0]
+        mark_revision = revision()
+        marked = change(
+            "PUT", f"/api/sensors/{outdoor['mac']}",
+            {"name": outdoor["name"], "species": outdoor.get("species"), "role": "outdoor"},
+            mark_revision,
+        )
+        assert marked.status_code == 200, marked.text
+        protected_revision = revision()
+        enclosure_id = made_enclosure.json()["id"]
+        attempted_update = change(
+            "PUT", f"/api/enclosures/{enclosure_id}",
+            {"name": "Should Not Change", "species_id": made_species.json()["id"],
+             "sensors": [{"mac": outdoor["mac"], "position": "Cool Side"}]},
+            protected_revision,
+        )
+        assert attempted_update.status_code == 409, attempted_update.text
+        assert "Outdoor reference sensors cannot be assigned" in attempted_update.text
+        assert revision() == protected_revision, "a rejected assignment must not write config"
+        cfg = load_config()
+        protected_sensor = next(sensor for sensor in cfg["sensors"]
+                                if sensor["mac"].upper() == outdoor["mac"].upper())
+        protected_enclosure = next(item for item in cfg["enclosures"]
+                                   if item["id"] == enclosure_id)
+        assert protected_sensor.get("role") == "outdoor"
+        assert protected_enclosure["name"] == "Revision Test"
+        assert protected_enclosure["sensors"] == []
+
+        enclosure_count = len(cfg["enclosures"])
+        attempted_create = change(
+            "POST", "/api/enclosures",
+            {"name": "Should Not Exist", "species_id": made_species.json()["id"],
+             "sensors": [{"mac": outdoor["mac"], "position": "Ambient"}]},
+            protected_revision,
+        )
+        assert attempted_create.status_code == 409, attempted_create.text
+        assert "Outdoor reference sensors cannot be assigned" in attempted_create.text
+        assert revision() == protected_revision
+        cfg = load_config()
+        assert len(cfg["enclosures"]) == enclosure_count
+        assert next(sensor for sensor in cfg["sensors"]
+                    if sensor["mac"].upper() == outdoor["mac"].upper()).get("role") == "outdoor"
+
+        attempted_pair = change(
+            "POST", "/api/pair",
+            {"mac": outdoor["mac"], "enclosure_id": enclosure_id,
+             "position": "Warm Side", "name": "Should Not Rename"},
+            protected_revision,
+        )
+        assert attempted_pair.status_code == 409, attempted_pair.text
+        assert "Outdoor reference sensors cannot be assigned" in attempted_pair.text
+        assert revision() == protected_revision
+        cfg = load_config()
+        protected_sensor = next(sensor for sensor in cfg["sensors"]
+                                if sensor["mac"].upper() == outdoor["mac"].upper())
+        protected_enclosure = next(item for item in cfg["enclosures"]
+                                   if item["id"] == enclosure_id)
+        assert protected_sensor.get("role") == "outdoor"
+        assert protected_sensor["name"] == outdoor["name"]
+        assert protected_enclosure["sensors"] == []
+
         # Two devices edited the same snapshot. The second receives 409 and
         # cannot overwrite the value the first device already saved.
         shared = revision()
@@ -174,6 +238,7 @@ def main() -> None:
         assert 'CONFIG_REVISION_HEADER = "X-Bask-Revision"' in frontend
         assert "recoverConfigConflict" in frontend
         assert "res.status === 409" in frontend
+        assert '_sensors.filter(s => s.role !== "outdoor")' in frontend
 
     print("Config concurrency tests passed.")
 

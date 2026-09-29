@@ -913,14 +913,16 @@ function editEnclosure(id) {
       <select id="ef-species">${spOpts(enc?.species_id)}</select></div>
     <div class="field"><label>Sensors &amp; positions</label>
       <div id="ef-slots">${slots.map(slotHTML).join("")}</div>
-      <button class="btn ghost sm" onclick="addSlot()">+ Add sensor slot</button></div>
+      <button class="btn ghost sm" onclick="addSlot()">+ Add sensor slot</button>
+      <small>Outdoor reference sensors stay independent and are not available here.</small></div>
     <div class="form-actions">
       ${enc ? `<button class="btn danger" onclick="deleteEnclosure('${idAttr(enc.id)}')">Delete</button>` : ""}
       <button class="btn primary" onclick="saveEnclosure(${enc ? `'${idAttr(enc.id)}'` : "null"})">Save</button>
     </div>`);
 }
 function slotHTML(slot) {
-  const opts = `<option value="">— Select sensor —</option>` + _sensors.map(s =>
+  const assignableSensors = _sensors.filter(s => s.role !== "outdoor");
+  const opts = `<option value="">— Select sensor —</option>` + assignableSensors.map(s =>
     `<option value="${esc(s.mac)}" ${s.mac.toUpperCase() === (slot.mac || "").toUpperCase() ? "selected" : ""}>${esc(s.name)}</option>`).join("");
   return `<div class="slot">
     <select class="ef-mac">${opts}</select>
@@ -1632,10 +1634,367 @@ function renderSettingsPane() {
         <button class="btn" onclick="document.getElementById('import-file').click()">⬆ Restore from backup</button>
       </div>
       <input type="file" id="import-file" accept="application/json,.json" style="display:none"
-             onchange="importSettings(this)"></div>`;
+             onchange="importSettings(this)"></div>
+    <div class="field share-card-setting"><label>📸 Share a room update</label>
+      <p class="setting-copy">Make a status card for friends or other keepers. It is generated entirely
+        in this browser and is never uploaded by Bask.</p>
+      <label class="field-check share-name-option">
+        <input type="checkbox" id="share-card-names" onchange="refreshShareCardPreview()">
+        <span>Include enclosure names
+          <small>Off by default. Even with names on, the card never includes readings, sensor IDs,
+            network addresses, credentials, or history.</small>
+        </span>
+      </label>
+      <img id="share-card-preview" class="share-card-preview"
+           alt="Preview of a privacy-safe Bask room status card">
+      <div class="toggle-row share-card-actions">
+        <button class="btn" onclick="downloadStatusCard()">⬇ Download PNG</button>
+        <button class="btn primary" onclick="shareStatusCard()">Share</button>
+      </div>
+    </div>
+    <div class="field about-setting"><label>About &amp; support</label>
+      <p class="setting-copy"><b>Bask is free, open source, local-first, and has no telemetry.</b>
+        Tips help Animal Room test more sensors and hardware while keeping the project available to everyone.</p>
+      <div class="support-links">
+        <a class="btn support-btn" href="https://ko-fi.com/jlyfshhh" target="_blank" rel="noopener noreferrer">☕ Support Animal Room</a>
+        <a class="btn" href="https://instagram.com/thebioactivekeeper" target="_blank" rel="noopener noreferrer">See the real animal room</a>
+        <a class="btn" href="https://animalroom.app/bask/" target="_blank" rel="noopener noreferrer">Bask guide</a>
+      </div>
+    </div>`;
   refreshAlertsUI();
   refreshUpdateUI();
   renderKeeperSetting();
+  requestAnimationFrame(refreshShareCardPreview);
+}
+
+// ── Privacy-safe room status card ────────────────────────────
+// Deliberately allowlist the only fields that may leave Bask in an image.
+// The full dashboard contains sensor names/MACs, live readings, signal ages,
+// device state and integration details. None of those are needed to say
+// "everything is green", so none of them enter this model. Enclosure names
+// cross the boundary only after the keeper checks the explicit opt-in box.
+const SHARE_STATUS_KEYS = ["ok", "warning", "danger", "stale", "no_data", "no_ranges"];
+const SHARE_NAME_LIMIT = 9; // three rows; preserves a dedicated footer safe area
+const SHARE_STATUS_LABELS = {
+  ok: "In range", warning: "Check", danger: "Alert",
+  stale: "No signal", no_data: "Not connected", no_ranges: "Needs ranges",
+};
+
+function shareCount(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
+}
+
+function shareCardModel(data, includeNames = false) {
+  const counts = {};
+  for (const key of SHARE_STATUS_KEYS) counts[key] = shareCount(data?.counts?.[key]);
+  const total = SHARE_STATUS_KEYS.reduce((sum, key) => sum + counts[key], 0);
+  const attention = counts.warning + counts.danger + counts.stale;
+  const incomplete = counts.no_data + counts.no_ranges;
+
+  let headline;
+  let detail;
+  let tone;
+  if (counts.danger) {
+    headline = `${counts.danger} enclosure${counts.danger === 1 ? " needs" : "s need"} attention`;
+    detail = counts.warning || counts.stale
+      ? `${counts.warning + counts.stale} more to check` : "Bask caught an out-of-range condition";
+    tone = "danger";
+  } else if (counts.warning || counts.stale) {
+    headline = `${attention} enclosure${attention === 1 ? "" : "s"} to check`;
+    detail = counts.stale ? `${counts.stale} waiting for a fresh sensor signal` : "Readings are drifting from their ranges";
+    tone = "warning";
+  } else if (counts.ok) {
+    headline = "All monitored enclosures are in range";
+    detail = incomplete
+      ? `${incomplete} enclosure${incomplete === 1 ? "" : "s"} still being set up`
+      : `${counts.ok} enclosure${counts.ok === 1 ? "" : "s"} monitored locally`;
+    tone = "ok";
+  } else {
+    headline = "Bask is ready to monitor";
+    detail = total ? `${total} enclosure${total === 1 ? "" : "s"} still being set up` : "Add an enclosure to get started";
+    tone = "idle";
+  }
+
+  const enclosures = includeNames && Array.isArray(data?.enclosures)
+    ? data.enclosures.slice(0, SHARE_NAME_LIMIT).map(item => {
+        const status = SHARE_STATUS_KEYS.includes(item?.status) ? item.status : "no_data";
+        const rawName = typeof item?.name === "string" ? item.name.trim() : "";
+        return {
+          name: (rawName || "Enclosure").slice(0, 42),
+          status,
+          label: SHARE_STATUS_LABELS[status],
+        };
+      })
+    : [];
+
+  return {
+    product: "Bask",
+    site: "animalroom.app",
+    eyebrow: "ANIMAL ROOM STATUS",
+    headline,
+    detail,
+    tone,
+    counts: {
+      ok: counts.ok,
+      check: counts.warning,
+      alert: counts.danger,
+      waiting: counts.stale + incomplete,
+    },
+    enclosures,
+    hiddenEnclosures: includeNames && Array.isArray(data?.enclosures)
+      ? Math.max(0, data.enclosures.length - enclosures.length) : 0,
+    namesIncluded: !!includeNames,
+  };
+}
+
+function shareCardCanvas(data, includeNames = false) {
+  const model = shareCardModel(data, includeNames);
+  const canvas = document.createElement("canvas");
+  canvas.width = 1200;
+  canvas.height = 630;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("This browser cannot draw a status card");
+
+  const palette = {
+    bg: "#14171b", surface: "#1c2027", border: "#2c323a", text: "#eef1f4",
+    muted: "#9aa3ad", accent: "#f08a3c", ok: "#7fd39b",
+    warning: "#f2a516", danger: "#f0a08c", idle: "#9aa3ad",
+  };
+  const tone = palette[model.tone] || palette.idle;
+  const roundRect = (x, y, width, height, radius) => {
+    const r = Math.min(radius, width / 2, height / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + width, y, x + width, y + height, r);
+    ctx.arcTo(x + width, y + height, x, y + height, r);
+    ctx.arcTo(x, y + height, x, y, r);
+    ctx.arcTo(x, y, x + width, y, r);
+    ctx.closePath();
+  };
+  const fitText = (text, maxWidth, startSize, minSize = 28) => {
+    let size = startSize;
+    do {
+      ctx.font = `800 ${size}px system-ui, -apple-system, sans-serif`;
+      if (ctx.measureText(text).width <= maxWidth) return size;
+      size -= 2;
+    } while (size > minSize);
+    return minSize;
+  };
+  const truncateText = (text, maxWidth) => {
+    if (ctx.measureText(text).width <= maxWidth) return text;
+    let shortened = text;
+    while (shortened && ctx.measureText(`${shortened}…`).width > maxWidth) {
+      shortened = shortened.slice(0, -1);
+    }
+    return `${shortened}…`;
+  };
+  const statusColor = status => ({
+    ok: palette.ok, warning: palette.warning, danger: palette.danger,
+    stale: palette.muted, no_data: palette.muted, no_ranges: palette.muted,
+  })[status] || palette.muted;
+
+  ctx.fillStyle = palette.bg;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const glow = ctx.createRadialGradient(1040, -40, 10, 1040, -40, 620);
+  glow.addColorStop(0, "rgba(240,138,60,.18)");
+  glow.addColorStop(1, "rgba(240,138,60,0)");
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // A small Bask sunrise mark, drawn locally instead of loading an asset.
+  ctx.fillStyle = palette.accent;
+  ctx.beginPath();
+  ctx.arc(76, 67, 24, Math.PI, 0);
+  ctx.lineTo(100, 68);
+  ctx.lineTo(52, 68);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = palette.accent;
+  ctx.lineWidth = 5;
+  ctx.lineCap = "round";
+  for (const angle of [-1.05, -0.52, 0, 0.52, 1.05]) {
+    const x1 = 76 + Math.sin(angle) * 34;
+    const y1 = 57 - Math.cos(angle) * 34;
+    const x2 = 76 + Math.sin(angle) * 44;
+    const y2 = 57 - Math.cos(angle) * 44;
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+  }
+  ctx.fillStyle = palette.text;
+  ctx.font = "800 34px system-ui, -apple-system, sans-serif";
+  ctx.fillText(model.product, 120, 76);
+  ctx.fillStyle = palette.muted;
+  ctx.font = "700 18px system-ui, -apple-system, sans-serif";
+  ctx.letterSpacing = "2px";
+  ctx.fillText(model.eyebrow, 52, 130);
+  ctx.letterSpacing = "0px";
+
+  ctx.fillStyle = tone;
+  ctx.beginPath(); ctx.arc(70, 198, 11, 0, Math.PI * 2); ctx.fill();
+  const headlineSize = fitText(model.headline, 1050, 54, 36);
+  ctx.fillStyle = palette.text;
+  ctx.font = `800 ${headlineSize}px system-ui, -apple-system, sans-serif`;
+  ctx.fillText(model.headline, 100, 214);
+  ctx.fillStyle = palette.muted;
+  ctx.font = "500 25px system-ui, -apple-system, sans-serif";
+  ctx.fillText(model.detail, 100, 254);
+
+  const stats = [
+    ["IN RANGE", model.counts.ok, palette.ok],
+    ["CHECK", model.counts.check, palette.warning],
+    ["ALERT", model.counts.alert, palette.danger],
+    ["WAITING", model.counts.waiting, palette.muted],
+  ];
+  const statY = 294;
+  const statW = 258;
+  for (let i = 0; i < stats.length; i += 1) {
+    const [label, value, color] = stats[i];
+    const x = 52 + i * 274;
+    roundRect(x, statY, statW, 104, 18);
+    ctx.fillStyle = palette.surface; ctx.fill();
+    ctx.strokeStyle = palette.border; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = color;
+    ctx.font = "800 40px system-ui, -apple-system, sans-serif";
+    ctx.fillText(String(value), x + 22, statY + 48);
+    ctx.fillStyle = palette.muted;
+    ctx.font = "800 15px system-ui, -apple-system, sans-serif";
+    ctx.fillText(label, x + 22, statY + 78);
+  }
+
+  if (model.namesIncluded && model.enclosures.length) {
+    const columns = 3;
+    const cellW = 352;
+    const cellH = 48;
+    model.enclosures.forEach((item, index) => {
+      const x = 52 + (index % columns) * 366;
+      const y = 426 + Math.floor(index / columns) * cellH;
+      ctx.fillStyle = statusColor(item.status);
+      ctx.beginPath(); ctx.arc(x + 8, y + 10, 6, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = palette.text;
+      ctx.font = "700 19px system-ui, -apple-system, sans-serif";
+      const name = truncateText(item.name, 220);
+      ctx.fillText(name, x + 24, y + 16);
+      ctx.fillStyle = palette.muted;
+      ctx.font = "600 14px system-ui, -apple-system, sans-serif";
+      ctx.textAlign = "right";
+      ctx.fillText(item.label, x + cellW, y + 15);
+      ctx.textAlign = "left";
+    });
+    if (model.hiddenEnclosures) {
+      ctx.fillStyle = palette.muted;
+      ctx.font = "600 15px system-ui, -apple-system, sans-serif";
+      ctx.fillText(`+${model.hiddenEnclosures} more`, 52, 590);
+    }
+  } else {
+    roundRect(52, 430, 1096, 112, 18);
+    ctx.fillStyle = palette.surface; ctx.fill();
+    ctx.strokeStyle = palette.border; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = palette.text;
+    ctx.font = "750 25px system-ui, -apple-system, sans-serif";
+    ctx.fillText("Enclosure names hidden", 82, 478);
+    ctx.fillStyle = palette.muted;
+    ctx.font = "500 20px system-ui, -apple-system, sans-serif";
+    ctx.fillText("A privacy-safe snapshot with no readings, identifiers, addresses, or history.", 82, 514);
+  }
+
+  ctx.fillStyle = palette.muted;
+  ctx.font = "700 18px system-ui, -apple-system, sans-serif";
+  ctx.textAlign = "right";
+  ctx.fillText(model.site, 1148, 598);
+  ctx.textAlign = "left";
+  return canvas;
+}
+
+function shareCardIncludesNames() {
+  return document.getElementById("share-card-names")?.checked === true;
+}
+
+function shareCardSnapshot() {
+  const includeNames = shareCardIncludesNames();
+  const model = shareCardModel(_dash, includeNames);
+  return {
+    includeNames,
+    model,
+    encoded: shareCardCanvas(_dash, includeNames).toDataURL("image/png"),
+  };
+}
+
+function applyShareCardPreview({ includeNames, model, encoded }) {
+  const preview = document.getElementById("share-card-preview");
+  if (!preview) return;
+  preview.src = encoded;
+  preview.alt = `Bask room status card: ${model.headline}. ${model.detail}. ` +
+    `${model.counts.ok} in range, ${model.counts.check} to check, ` +
+    `${model.counts.alert} alerts, ${model.counts.waiting} waiting. ` +
+    `Enclosure names ${includeNames ? "included" : "hidden"}.`;
+}
+
+function refreshShareCardPreview() {
+  const preview = document.getElementById("share-card-preview");
+  if (!preview || !_dash) return;
+  try {
+    applyShareCardPreview(shareCardSnapshot());
+  } catch (_) {
+    preview.removeAttribute("src");
+    preview.alt = "Status card preview is unavailable in this browser";
+  }
+}
+
+function statusCardBlob() {
+  if (!_dash) throw new Error("Room status has not loaded yet");
+  // Canvas.toBlob() is asynchronous. On iOS that can outlive the short-lived
+  // user gesture Web Share requires, causing a valid tap to be rejected. Make
+  // the modest 1200×630 image synchronously so navigator.share() is called
+  // while the tap is still active.
+  // Use the same snapshot for the preview and the file. Dashboard polling can
+  // otherwise make the shared card differ from what the keeper just reviewed.
+  const snapshot = shareCardSnapshot();
+  applyShareCardPreview(snapshot);
+  const { encoded } = snapshot;
+  const binary = atob(encoded.slice(encoded.indexOf(",") + 1));
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return new Blob([bytes], { type: "image/png" });
+}
+
+function downloadStatusCardBlob(blob) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "bask-room-status.png";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function downloadStatusCard() {
+  try {
+    downloadStatusCardBlob(statusCardBlob());
+    showToast("Status card downloaded");
+  } catch (error) {
+    showToast(error.message || "Could not make the status card");
+  }
+}
+
+async function shareStatusCard() {
+  try {
+    const blob = statusCardBlob();
+    const file = typeof File === "function"
+      ? new File([blob], "bask-room-status.png", { type: "image/png" }) : null;
+    if (file && navigator.share && navigator.canShare?.({ files: [file] })) {
+      await navigator.share({
+        files: [file],
+        title: "Animal room status",
+        text: "Monitored locally with Bask — animalroom.app",
+      });
+      return;
+    }
+    downloadStatusCardBlob(blob);
+    showToast("Sharing is not available here, so the PNG was downloaded");
+  } catch (error) {
+    if (error?.name !== "AbortError") showToast(error.message || "Could not share the status card");
+  }
 }
 
 // ── Head Keeper key management ───────────────────────────────

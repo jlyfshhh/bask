@@ -1433,6 +1433,26 @@ class ReorderPayload(BaseModel):
         return order
 
 
+def reject_outdoor_enclosure_assignment(cfg: dict, sensor_macs) -> None:
+    """Keep the outside reference independent from enclosure measurements.
+
+    This check belongs at every server-side assignment boundary. Hiding the
+    sensor in the browser is only a convenience; stale pages and API clients
+    must not be able to put it back into a habitat while preserving its
+    explicit outdoor role.
+    """
+    requested = {(mac or "").upper() for mac in sensor_macs}
+    outdoor = next((sensor for sensor in cfg.get("sensors", [])
+                    if sensor.get("role") == "outdoor"
+                    and (sensor.get("mac") or "").upper() in requested), None)
+    if outdoor is not None:
+        raise HTTPException(
+            409,
+            "Outdoor reference sensors cannot be assigned to an enclosure. "
+            "Turn off the outdoor reference role first.",
+        )
+
+
 @app.get("/api/enclosures")
 def list_enclosures():
     return {"enclosures": load_config()["enclosures"]}
@@ -1442,10 +1462,16 @@ def list_enclosures():
 def create_enclosure(payload: EnclosurePayload, _: None = Keeper,
                      revision: int = ConfigWrite):
     enc_id = str(uuid.uuid4())
-    mutate_config(revision, lambda cfg: cfg["enclosures"].append({
-        "id": enc_id, "name": payload.name, "species_id": payload.species_id,
-        "sensors": [{"mac": s.mac.upper(), "position": s.position} for s in payload.sensors],
-    }))
+
+    def create(cfg: dict) -> None:
+        reject_outdoor_enclosure_assignment(cfg, (sensor.mac for sensor in payload.sensors))
+        cfg["enclosures"].append({
+            "id": enc_id, "name": payload.name, "species_id": payload.species_id,
+            "sensors": [{"mac": s.mac.upper(), "position": s.position}
+                        for s in payload.sensors],
+        })
+
+    mutate_config(revision, create)
     return {"ok": True, "id": enc_id}
 
 
@@ -1473,16 +1499,16 @@ def reorder_enclosures(payload: ReorderPayload, _: None = Keeper,
 def update_enclosure(enc_id: str, payload: EnclosurePayload, _: None = Keeper,
                      revision: int = ConfigWrite):
     def update(cfg: dict) -> None:
-        for enclosure in cfg["enclosures"]:
-            if enclosure["id"] == enc_id:
-                enclosure["name"] = payload.name
-                enclosure["species_id"] = payload.species_id
-                enclosure["sensors"] = [
-                    {"mac": sensor.mac.upper(), "position": sensor.position}
-                    for sensor in payload.sensors
-                ]
-                return
-        raise HTTPException(404, "Enclosure not found")
+        enclosure = next((item for item in cfg["enclosures"] if item["id"] == enc_id), None)
+        if enclosure is None:
+            raise HTTPException(404, "Enclosure not found")
+        reject_outdoor_enclosure_assignment(cfg, (sensor.mac for sensor in payload.sensors))
+        enclosure["name"] = payload.name
+        enclosure["species_id"] = payload.species_id
+        enclosure["sensors"] = [
+            {"mac": sensor.mac.upper(), "position": sensor.position}
+            for sensor in payload.sensors
+        ]
 
     mutate_config(revision, update)
     return {"ok": True}
@@ -1635,6 +1661,7 @@ def pair_sensor(payload: PairPayload, _: None = Keeper, revision: int = ConfigWr
         name = (payload.name or f"{enclosure['name']} {pos}").strip()
         existing = next((sensor for sensor in cfg["sensors"]
                          if sensor["mac"].upper() == mac), None)
+        reject_outdoor_enclosure_assignment(cfg, (mac,))
         if existing:
             existing["name"] = name
         else:

@@ -552,6 +552,32 @@ a.btn { text-decoration: none; }
 .field-check span { font-size: 0.95rem; font-weight: 600; color: var(--text); }
 .field-check small { display: block; font-weight: 400; color: var(--muted); font-size: 0.82rem; margin-top: 2px; }
 
+/* A room-status image that stays on the user's device until they deliberately
+   download or share it. The opt-in for names is intentionally beside the
+   preview, not hidden in global preferences. */
+.setting-copy {
+  color: var(--muted); font-size: 0.9rem; line-height: 1.55; margin: 0 0 14px;
+}
+.setting-copy b { color: var(--text); }
+.share-card-setting, .about-setting {
+  margin-top: 24px; padding: 18px; border: 1px solid var(--border);
+  border-radius: 16px; background: var(--surface);
+}
+.share-name-option { margin: 0 0 14px; }
+.share-card-preview {
+  display: block; width: 100%; aspect-ratio: 1200 / 630; object-fit: contain;
+  border: 1px solid var(--border); border-radius: 14px; background: var(--bg);
+  margin-bottom: 14px;
+}
+.share-card-preview:not([src]) { display: none; }
+.share-card-actions .btn { flex: 1; }
+.support-links { display: flex; flex-wrap: wrap; gap: 10px; }
+.support-links .btn { flex: 1 1 210px; }
+.support-links .support-btn {
+  color: #fff; background: #c95055; border-color: #c95055;
+}
+.support-links .support-btn:active { background: #b7464b; }
+
 /* +/- numeric stepper for ranges (keyboard-free) */
 .stepper { display: flex; align-items: center; gap: 12px; }
 .stepper .sval {
