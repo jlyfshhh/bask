@@ -22,6 +22,9 @@ concurrency:
 jobs:
   verify:
     uses: ./.github/workflows/test.yml
+    # Keep the same privacy gate on the deployment path as on direct test runs.
+    secrets:
+      PRIVACY_DENYLIST: ${{ secrets.PRIVACY_DENYLIST }}
 
   deploy:
     needs: verify
