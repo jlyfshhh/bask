@@ -63,8 +63,11 @@ jobs:
           PYTHONPATH="$PWD:$PWD/scanner" python tests/test_room_status.py
           PYTHONPATH="$PWD:$PWD/scanner" python tests/test_range_window.py
           PYTHONPATH="$PWD:$PWD/scanner" python tests/test_cool_side_only.py
-          PYTHONPATH="$PWD:$PWD/scanner" python tests/test_solar.py
-          PYTHONPATH="$PWD:$PWD/scanner" python tests/test_us_zip.py
+          # -m unittest so the TestCase classes actually run; a bare
+          # `python tests/test_solar.py` used to execute zero tests. Guard
+          # the count so a future discovery break fails loudly.
+          sz=$(PYTHONPATH="$PWD:$PWD/scanner" python -m unittest tests.test_solar tests.test_us_zip 2>&1); echo "$sz"
+          echo "$sz" | grep -qE "^Ran ([1-9][0-9]*) tests" || { echo "No solar/ZIP tests ran"; exit 1; }
           PYTHONPATH="$PWD:$PWD/scanner" python tests/test_container_boundary.py
           PYTHONPATH="$PWD:$PWD/scanner" python tests/test_climate_log.py
           PYTHONPATH="$PWD:$PWD/scanner" python tests/test_thermostat_units.py

@@ -94,3 +94,7 @@ class DayNightDecision(unittest.TestCase):
         # No day_mode at all is what every upgraded config looks like.
         self.assertTrue(is_daytime({"day_start_hour": 8, "day_end_hour": 20}, self.at(9)))
         self.assertFalse(is_daytime({"day_start_hour": 8, "day_end_hour": 20}, self.at(21)))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -58,3 +58,7 @@ class Lookup(unittest.TestCase):
         lat, lon = us_zip.lookup("33101")
         rise, set_ = solar.sun_times(dt.date(2026, 6, 21), lat, lon, ZoneInfo("America/New_York"))
         self.assertLess((set_ - rise).total_seconds() / 3600, 14, "Miami's is not")
+
+
+if __name__ == "__main__":
+    unittest.main()
