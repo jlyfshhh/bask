@@ -99,4 +99,17 @@ assert.match(source, /Enclosure names \$\{includeNames \? "included" : "hidden"\
 assert.match(source, /applyShareCardPreview\(snapshot\)/,
   "the downloaded/shared file must refresh the preview from the same snapshot");
 
+// Haven combined card: care is counts only, and a stray private field on the
+// care object is dropped by the model whitelist.
+const careModel = shareCardModel(fixture, false, {
+  completed: 5, remaining: 2, overdue: 1,
+  taskTitle: "PRIVATE-TASK", animalName: "PRIVATE-ANIMAL-NAME",
+});
+assert.deepEqual(JSON.parse(JSON.stringify(careModel.care)), { completed: 5, remaining: 2, overdue: 1 });
+assert.ok(!JSON.stringify(careModel).includes("PRIVATE-TASK"), "care must not carry task text");
+assert.ok(!JSON.stringify(careModel).includes("PRIVATE-ANIMAL-NAME"), "care must not carry animal names");
+assert.equal(careModel.eyebrow, "HAVEN · ROOM & CARE");
+assert.equal(privateModel.care, null, "no care means no care field");
+assert.equal(privateModel.eyebrow, "ANIMAL ROOM STATUS");
+
 console.log("Privacy-safe share card tests passed.");

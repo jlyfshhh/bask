@@ -4,6 +4,7 @@
 const REFRESH_MS = 15000;
 
 let _dash = null;
+let _shedCare = null; // privacy-safe care counts from Haven (Shed feed), or null
 let _species = [];
 let _sensors = [];
 let _lastData = null;
@@ -1665,6 +1666,7 @@ function renderSettingsPane() {
   refreshUpdateUI();
   renderKeeperSetting();
   requestAnimationFrame(refreshShareCardPreview);
+  loadShedCare();
 }
 
 // ── Privacy-safe room status card ────────────────────────────
@@ -1685,7 +1687,7 @@ function shareCount(value) {
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
 }
 
-function shareCardModel(data, includeNames = false) {
+function shareCardModel(data, includeNames = false, care = null) {
   const counts = {};
   for (const key of SHARE_STATUS_KEYS) counts[key] = shareCount(data?.counts?.[key]);
   const total = SHARE_STATUS_KEYS.reduce((sum, key) => sum + counts[key], 0);
@@ -1731,7 +1733,7 @@ function shareCardModel(data, includeNames = false) {
   return {
     product: "Bask",
     site: "animalroom.app",
-    eyebrow: "ANIMAL ROOM STATUS",
+    eyebrow: care ? "HAVEN · ROOM & CARE" : "ANIMAL ROOM STATUS",
     headline,
     detail,
     tone,
@@ -1745,11 +1747,13 @@ function shareCardModel(data, includeNames = false) {
     hiddenEnclosures: includeNames && Array.isArray(data?.enclosures)
       ? Math.max(0, data.enclosures.length - enclosures.length) : 0,
     namesIncluded: !!includeNames,
+    // Haven care counts only — numbers, never task text or animal names.
+    care: care ? { completed: care.completed, remaining: care.remaining, overdue: care.overdue } : null,
   };
 }
 
-function shareCardCanvas(data, includeNames = false) {
-  const model = shareCardModel(data, includeNames);
+function shareCardCanvas(data, includeNames = false, care = null) {
+  const model = shareCardModel(data, includeNames, care);
   const canvas = document.createElement("canvas");
   canvas.width = 1200;
   canvas.height = 630;
@@ -1885,6 +1889,32 @@ function shareCardCanvas(data, includeNames = false) {
       ctx.font = "600 15px system-ui, -apple-system, sans-serif";
       ctx.fillText(`+${model.hiddenEnclosures} more`, 52, 590);
     }
+  } else if (model.care) {
+    // Haven is connected: use this space for today's care, counts only.
+    roundRect(52, 430, 1096, 112, 18);
+    ctx.fillStyle = palette.surface; ctx.fill();
+    ctx.strokeStyle = palette.border; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = palette.accent;
+    ctx.font = "800 16px system-ui, -apple-system, sans-serif";
+    ctx.letterSpacing = "2px";
+    ctx.fillText("TODAY’S CARE", 82, 470);
+    ctx.letterSpacing = "0px";
+    const careBits = [
+      [String(model.care.completed), "complete", palette.ok],
+      [String(model.care.remaining), "remaining", palette.accent],
+      [String(model.care.overdue), "overdue", palette.danger],
+    ];
+    let cx = 82;
+    for (const [value, label, color] of careBits) {
+      ctx.fillStyle = color;
+      ctx.font = "800 34px system-ui, -apple-system, sans-serif";
+      ctx.fillText(value, cx, 516);
+      const vw = ctx.measureText(value).width;
+      ctx.fillStyle = palette.muted;
+      ctx.font = "600 20px system-ui, -apple-system, sans-serif";
+      ctx.fillText(label, cx + vw + 10, 516);
+      cx += vw + 10 + ctx.measureText(label).width + 40;
+    }
   } else {
     roundRect(52, 430, 1096, 112, 18);
     ctx.fillStyle = palette.surface; ctx.fill();
@@ -1909,13 +1939,33 @@ function shareCardIncludesNames() {
   return document.getElementById("share-card-names")?.checked === true;
 }
 
+// When Haven is connected, Bask reads Shed's display feed. Pull only the care
+// *counts* for the share card — completed / remaining / overdue — never the task
+// list, which can name animals. This makes the room card a combined Haven card.
+async function loadShedCare() {
+  try {
+    const room = await api("GET", "/api/room-dashboard");
+    const shed = room && room.shed;
+    const summary = shed && shed.available && shed.data ? shed.data.summary : null;
+    _shedCare = summary ? {
+      completed: shareCount(summary.completed),
+      remaining: shareCount(summary.remaining),
+      overdue: shareCount(summary.overdue),
+      total: shareCount(summary.total),
+    } : null;
+  } catch (_) {
+    _shedCare = null;
+  }
+  refreshShareCardPreview();
+}
+
 function shareCardSnapshot() {
   const includeNames = shareCardIncludesNames();
-  const model = shareCardModel(_dash, includeNames);
+  const model = shareCardModel(_dash, includeNames, _shedCare);
   return {
     includeNames,
     model,
-    encoded: shareCardCanvas(_dash, includeNames).toDataURL("image/png"),
+    encoded: shareCardCanvas(_dash, includeNames, _shedCare).toDataURL("image/png"),
   };
 }
 
