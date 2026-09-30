@@ -24,7 +24,7 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt -r requirements-dev.txt
       - name: Shell syntax
-        run: bash -n get-bask.sh deploy/install.sh docker-entrypoint.sh scripts/backup.sh scripts/privacy-scan.sh tests/installer.sh tests/backup.sh tests/privacy-scan.sh tests/compose-contract.sh tests/apparmor-profile.sh
+        run: bash -n get-bask.sh deploy/install.sh docker-entrypoint.sh scripts/backup.sh scripts/privacy-scan.sh tests/installer.sh tests/backup.sh tests/privacy-scan.sh tests/compose-contract.sh tests/apparmor-profile.sh tests/first-start.sh
       - name: Privacy scan behavior
         run: bash tests/privacy-scan.sh
       - name: Privacy scan
@@ -77,3 +77,5 @@ jobs:
           node tests/test_share_card.js
       - name: Container build
         run: docker build -t bask:test .
+      - name: First start on an empty data directory (real Docker)
+        run: bash tests/first-start.sh
