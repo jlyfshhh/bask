@@ -22,6 +22,34 @@ ROOT = Path(__file__).parent.parent
 DATA_DIR = Path(os.environ.get("BASK_DATA_DIR", ROOT))
 DB_PATH = DATA_DIR / "readings.db"
 
+# The web server runs unprivileged (uid BASK_UID); the scanner runs as root.
+# Both open this database. SQLite's WAL sidecars (-wal/-shm) are created by
+# whichever process first opens the DB, owned by that process mode 0600. If the
+# root scanner creates them — which it does whenever the web is briefly down,
+# e.g. a container recreate — the web afterwards cannot open the database at all
+# ("sqlite3.OperationalError: unable to open database file") and crash-loops.
+# So from whichever process is root, hand the database and its sidecars back to
+# the web's uid on every connection, making a web restart safe regardless of
+# ordering. The web (non-root) skips this; root can always open any owner's file.
+_OWNER_UID = int(os.environ.get("BASK_UID", "10001"))
+_OWNER_GID = int(os.environ.get("BASK_GID", "10001"))
+
+
+def _reconcile_owner() -> None:
+    if not hasattr(os, "geteuid") or os.geteuid() != 0:
+        return
+    base = str(DB_PATH)
+    for path in (base, base + "-wal", base + "-shm"):
+        try:
+            st = os.stat(path)
+        except OSError:
+            continue
+        if st.st_uid != _OWNER_UID or st.st_gid != _OWNER_GID:
+            try:
+                os.chown(path, _OWNER_UID, _OWNER_GID)
+            except OSError:
+                pass  # best-effort; never fail a reading write over ownership
+
 
 def get_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, timeout=10)
@@ -38,6 +66,10 @@ def get_conn() -> sqlite3.Connection:
     # primary key. Keeping temporary structures in memory removes the
     # dependency entirely; the working sets are small and the Pi has RAM.
     conn.execute("PRAGMA temp_store=MEMORY")
+    # Opening in WAL mode just created/opened the -wal/-shm sidecars; if we are
+    # root (the scanner), make sure they belong to the web's uid so the web can
+    # always reopen the database.
+    _reconcile_owner()
     return conn
 
 

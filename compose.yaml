@@ -105,6 +105,11 @@ services:
     environment:
       BASK_DATA_DIR: /data
       BASK_ROLE: scanner
+      # The scanner runs as root; tell it the web's uid/gid so the DB layer can
+      # hand readings.db and its WAL sidecars back to the web, keeping a web
+      # container recreate safe (see scanner/db.py _reconcile_owner).
+      BASK_UID: "${BASK_UID:-10001}"
+      BASK_GID: "${BASK_GID:-10001}"
       DBUS_SYSTEM_BUS_ADDRESS: unix:path=/var/run/dbus/system_bus_socket
     volumes:
       - ${BASK_DATA_PATH:-./data}:/data
