@@ -6,6 +6,13 @@ services:
     image: ghcr.io/jlyfshhh/bask:${BASK_TAG:-latest}
     container_name: bask
     restart: unless-stopped
+    # Hand /data (and any WAL sidecars a prior root scanner left) back to the web
+    # uid before the web starts, so a cold start or normal update with pre-existing
+    # root-owned files can never strand the non-root web. The running scanner's own
+    # reconcile covers an in-place web recreate; this covers the both-stopped case.
+    depends_on:
+      bask-init:
+        condition: service_completed_successfully
     logging:
       driver: json-file
       options:
@@ -46,6 +53,41 @@ services:
       timeout: 5s
       retries: 6
       start_period: 30s
+
+  # One-shot root step that hands /data and any readings.db* sidecars back to the
+  # web's uid before the web starts. This is the only place a root process touches
+  # ownership at startup; it holds just CAP_CHOWN, writes nothing else, and exits.
+  # It closes the cold-start/update deadlock where pre-existing root-owned WAL
+  # files block the non-root web while the scanner is gated behind the web.
+  bask-init:
+    image: ghcr.io/jlyfshhh/bask:${BASK_TAG:-latest}
+    container_name: bask-init
+    user: "0:0"
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      BASK_UID: "${BASK_UID:-10001}"
+      BASK_GID: "${BASK_GID:-10001}"
+    entrypoint:
+      - python
+      - -c
+      - |
+        import os, glob
+        uid = int(os.environ.get("BASK_UID", "10001"))
+        gid = int(os.environ.get("BASK_GID", "10001"))
+        for p in ["/data", *glob.glob("/data/readings.db*")]:
+            try:
+                os.chown(p, uid, gid)
+            except OSError as exc:
+                print("bask-init: could not chown %s: %s" % (p, exc), flush=True)
+    volumes:
+      - ${BASK_DATA_PATH:-./data}:/data
+    restart: "no"
 
   bask-scanner:
     image: ghcr.io/jlyfshhh/bask:${BASK_TAG:-latest}
