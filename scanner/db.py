@@ -14,6 +14,7 @@ Design notes for the Raspberry Pi:
     state. See the climate section below.
 """
 import sqlite3
+import logging
 import os
 import time
 from pathlib import Path
@@ -33,9 +34,11 @@ DB_PATH = DATA_DIR / "readings.db"
 # ordering. The web (non-root) skips this; root can always open any owner's file.
 _OWNER_UID = int(os.environ.get("BASK_UID", "10001"))
 _OWNER_GID = int(os.environ.get("BASK_GID", "10001"))
+_chown_warned = False
 
 
 def _reconcile_owner() -> None:
+    global _chown_warned
     if not hasattr(os, "geteuid") or os.geteuid() != 0:
         return
     base = str(DB_PATH)
@@ -47,8 +50,17 @@ def _reconcile_owner() -> None:
         if st.st_uid != _OWNER_UID or st.st_gid != _OWNER_GID:
             try:
                 os.chown(path, _OWNER_UID, _OWNER_GID)
-            except OSError:
-                pass  # best-effort; never fail a reading write over ownership
+            except OSError as exc:
+                # A persistent failure here (typically a missing CAP_CHOWN in the
+                # scanner container) means the web can no longer reopen the
+                # database. Never fail a reading write over it, but say so loudly
+                # once so the misconfiguration is visible instead of silent.
+                if not _chown_warned:
+                    _chown_warned = True
+                    logging.getLogger(__name__).warning(
+                        "unable to reconcile %s ownership to uid %s (need CAP_CHOWN?): %s",
+                        path, _OWNER_UID, exc,
+                    )
 
 
 def get_conn() -> sqlite3.Connection:

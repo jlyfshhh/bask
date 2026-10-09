@@ -77,11 +77,15 @@ services:
     # the mounted socket and write scanner state only through /data.
     user: "0:0"
     # Dropping every capability also drops CAP_DAC_OVERRIDE, without which even
-    # root cannot write a /data directory owned by another uid.
+    # root cannot write a /data directory owned by another uid. CAP_CHOWN lets the
+    # DB layer hand readings.db and its WAL sidecars back to the web's uid
+    # (scanner/db.py _reconcile_owner) so a web recreate is safe; without it the
+    # chown fails EPERM and the web cannot reopen the database.
     cap_drop:
       - ALL
     cap_add:
       - DAC_OVERRIDE
+      - CHOWN
     # Runtime state is written only to the separate /data bind mount; the
     # scanner image filesystem itself stays immutable.
     read_only: true

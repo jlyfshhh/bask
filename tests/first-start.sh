@@ -101,4 +101,50 @@ if ! docker exec bask python -c "import urllib.request,sys; sys.exit(0 if urllib
 fi
 echo "  /api/health responds, so the web is reading its own config and database"
 
+# Regression for the 2026-10-09 web-recreate WAL-ownership race. While the root
+# scanner keeps running, a web recreate must recover. The scanner's DB layer hands
+# the WAL sidecars back to the web uid, which needs CAP_CHOWN — without it the
+# chown fails EPERM, is swallowed, and the web can never reopen the database.
+echo "  web-recreate ownership regression (scanner keeps running)"
+# As root (the scanner's identity) create valid WAL sidecars, root-owned: the
+# exact state that stranded the web.
+docker exec -u 0 bask-scanner python - <<'PY'
+import os, sqlite3
+c = sqlite3.connect("/data/readings.db", timeout=10)
+c.execute("PRAGMA journal_mode=WAL")
+c.execute("CREATE TABLE IF NOT EXISTS _probe(x)")
+c.execute("INSERT INTO _probe VALUES (1)")
+c.commit(); c.close()
+for suffix in ("-wal", "-shm"):
+    p = "/data/readings.db" + suffix
+    if os.path.exists(p):
+        os.chown(p, 0, 0)
+PY
+# The scanner's reconcile must hand them back to the web uid (needs CAP_CHOWN).
+docker exec -u 0 bask-scanner python -c "import sys; sys.path.insert(0,'/app/scanner'); import db; db._reconcile_owner()"
+for suffix in -wal -shm; do
+  f="$work/data/readings.db$suffix"
+  [[ -e "$f" ]] || continue
+  owner="$(stat -c '%u' "$f")"
+  if [[ "$owner" != "$want_uid" ]]; then
+    echo "readings.db$suffix is uid $owner after reconcile, not web uid $want_uid — the scanner cannot chown (missing CAP_CHOWN?)." >&2
+    exit 1
+  fi
+done
+echo "  the scanner reconciled root-owned WAL sidecars back to the web uid"
+# And a real web recreate while the scanner keeps running must come back healthy.
+compose up -d --no-deps --force-recreate bask >/dev/null 2>&1
+recreated=""
+for _ in $(seq 1 30); do
+  state="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}nohc{{end}}' bask 2>/dev/null || true)"
+  if [[ "$state" == "healthy" ]]; then recreated=1; break; fi
+  sleep 2
+done
+if [[ -z "$recreated" ]]; then
+  echo "The web did not recover healthy after a recreate while the scanner was running." >&2
+  docker logs bask 2>&1 | tail -20 >&2 || true
+  exit 1
+fi
+echo "  the web recovered healthy after a recreate alongside the running scanner"
+
 echo "First-start test passed."
