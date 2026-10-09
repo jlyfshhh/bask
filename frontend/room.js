@@ -419,10 +419,70 @@ async function refresh() {
 }
 
 if (typeof document !== "undefined") {
-  updateClock();
-  refresh();
-  setInterval(updateClock, 1000);
-  setInterval(refresh, 15000);
+  // The wall display is dark during the animals' night (20:00–08:00, matching
+  // the Pi's photoperiod reconciler). Powering the panel off at the compositor
+  // is not enough on its own: a kiosk that keeps repainting (the clock ticks
+  // every second) makes wlroots re-power a DPMS-slept output within seconds. So
+  // at night we STOP all rendering and cover the screen with a static black
+  // layer. With no new frames, the Pi's `wlopm --off` sticks and the backlight
+  // stays off; and if the panel is ever briefly re-powered, it shows only black.
+  const NIGHT_START = 20;
+  const DAY_START = 8;
+  const isNight = (d = new Date()) => {
+    const hour = d.getHours();
+    return hour >= NIGHT_START || hour < DAY_START;
+  };
+
+  let clockTimer = null;
+  let refreshTimer = null;
+  let nightCover = null;
+  let night = null; // unknown until the first applyPhase()
+
+  const showCover = (on) => {
+    if (on) {
+      if (!nightCover) {
+        nightCover = document.createElement("div");
+        nightCover.id = "night-cover";
+        nightCover.style.cssText = "position:fixed;inset:0;background:#000;z-index:2147483647";
+        document.body.appendChild(nightCover);
+      }
+    } else if (nightCover) {
+      nightCover.remove();
+      nightCover = null;
+    }
+  };
+
+  const startTimers = () => {
+    if (!clockTimer) clockTimer = setInterval(updateClock, 1000);
+    if (!refreshTimer) refreshTimer = setInterval(refresh, 15000);
+  };
+  const stopTimers = () => {
+    clearInterval(clockTimer);
+    clearInterval(refreshTimer);
+    clockTimer = null;
+    refreshTimer = null;
+  };
+
+  const applyPhase = () => {
+    const now = isNight();
+    if (now === night) return; // no change -> no DOM mutation -> no repaint
+    night = now;
+    if (now) {
+      stopTimers();
+      showCover(true);
+    } else {
+      showCover(false);
+      updateClock();
+      refresh();
+      startTimers();
+    }
+  };
+
+  applyPhase();
+  // Low-frequency watcher. It only touches the DOM when the phase flips, so at
+  // night it produces no frames and the panel can stay powered down; by day the
+  // 1s clock and 15s refresh timers above do the repainting.
+  setInterval(applyPhase, 60000);
 }
 
 if (typeof module !== "undefined") {
