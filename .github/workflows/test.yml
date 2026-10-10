@@ -75,6 +75,7 @@ jobs:
           node tests/test_accessibility.js
           node tests/test_solar_settings.js
           node tests/test_share_card.js
+          node tests/test_room_kiosk.js
       - name: Container build
         run: docker build -t bask:test .
       - name: First start on an empty data directory (real Docker)

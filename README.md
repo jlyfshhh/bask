@@ -229,7 +229,7 @@ Setup takes about two minutes: **⚙ Manage → Settings → Set up phone alerts
 ## Displaying it
 
 - **Any tablet / phone / computer** — just open the URL. A cheap wall-mounted tablet makes an excellent always-on display. On a phone or tablet, use your browser's **Add to Home Screen** — Bask installs like an app and launches fullscreen.
-- **A monitor on the host** — `kiosk.sh` launches a fullscreen browser (it prefers the lightweight [cog](https://github.com/Igalia/cog) WPE browser, with Chromium as a fallback). Rendering a browser on a very low-power host (e.g. Pi Zero W) is slow, so a separate display device is usually smoother.
+- **A monitor on the host** — `kiosk.sh` launches a fullscreen browser (it prefers the lightweight [cog](https://github.com/Igalia/cog) WPE browser, with Chromium as a fallback). Rendering a browser on a very low-power host (e.g. Pi Zero W) is slow, so a separate display device is usually smoother. `kiosk.sh` loads `room.html?kiosk=1`, which opts the wall display into a 20:00–08:00 night blackout (append `&night=START-END` in 24-hour hours to change the window). Ordinary phone/browser visits to `room.html` (no `?kiosk=1`) stay live around the clock.
 - **Smart displays** — anything with a web browser works. (For example, an Amazon Echo Show can open the URL in its Silk browser; `frontend/keep.js` includes a small same-origin keep-alive so Silk-class browsers don't time out — it activates only on that user-agent and is a no-op everywhere else.)
 
 ## Security

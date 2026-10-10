@@ -418,40 +418,57 @@ async function refresh() {
   }
 }
 
+// ── Kiosk night blackout (explicit opt-in) ──────────────────────────────────
+// /room.html is a normal page: phones and laptops see the live dashboard at all
+// hours. The black-out below applies ONLY to the wall-display kiosk, which opts
+// in with `?kiosk=1` on its URL (kiosk.sh loads /room.html?kiosk=1). An optional
+// `night=START-END` (24h hours, e.g. `night=20-8`) overrides the default 20:00-
+// 08:00 animal night; the window may wrap midnight.
+//
+// TODO: take the schedule from the room's own config (settings.day_start_hour /
+// day_end_hour) and its timezone instead of query params + the kiosk's local
+// clock. /api/room-dashboard is a strict public allowlist that does not carry
+// either yet, so for now the kiosk's system timezone (the Pi's, which is the
+// same clock its photoperiod reconciler uses) decides.
+const KIOSK_DEFAULT_NIGHT_START = 20;
+const KIOSK_DEFAULT_DAY_START = 8;
+
+function kioskSettings(search = "") {
+  let params;
+  try {
+    params = new URLSearchParams(search || "");
+  } catch (error) {
+    params = new URLSearchParams("");
+  }
+  const flag = String(params.get("kiosk") || "").trim().toLowerCase();
+  const enabled = flag === "1" || flag === "true" || flag === "yes" || flag === "on";
+  let nightStart = KIOSK_DEFAULT_NIGHT_START;
+  let dayStart = KIOSK_DEFAULT_DAY_START;
+  const match = /^(\d{1,2})-(\d{1,2})$/.exec(String(params.get("night") || "").trim());
+  if (match) {
+    const start = Number(match[1]);
+    const end = Number(match[2]);
+    // An empty (start == end) or out-of-range window is ignored, not honoured.
+    if (start < 24 && end < 24 && start !== end) {
+      nightStart = start;
+      dayStart = end;
+    }
+  }
+  return { enabled, nightStart, dayStart };
+}
+
+// True when `hour` (0-23) falls in the night window [nightStart, dayStart).
+// nightStart > dayStart is the usual overnight window that wraps midnight.
+function isNightHour(hour, nightStart = KIOSK_DEFAULT_NIGHT_START, dayStart = KIOSK_DEFAULT_DAY_START) {
+  if (nightStart > dayStart) return hour >= nightStart || hour < dayStart;
+  return hour >= nightStart && hour < dayStart;
+}
+
 if (typeof document !== "undefined") {
-  // The wall display is dark during the animals' night (20:00–08:00, matching
-  // the Pi's photoperiod reconciler). Powering the panel off at the compositor
-  // is not enough on its own: a kiosk that keeps repainting (the clock ticks
-  // every second) makes wlroots re-power a DPMS-slept output within seconds. So
-  // at night we STOP all rendering and cover the screen with a static black
-  // layer. With no new frames, the Pi's `wlopm --off` sticks and the backlight
-  // stays off; and if the panel is ever briefly re-powered, it shows only black.
-  const NIGHT_START = 20;
-  const DAY_START = 8;
-  const isNight = (d = new Date()) => {
-    const hour = d.getHours();
-    return hour >= NIGHT_START || hour < DAY_START;
-  };
+  const kiosk = kioskSettings(typeof location !== "undefined" ? location.search : "");
 
   let clockTimer = null;
   let refreshTimer = null;
-  let nightCover = null;
-  let night = null; // unknown until the first applyPhase()
-
-  const showCover = (on) => {
-    if (on) {
-      if (!nightCover) {
-        nightCover = document.createElement("div");
-        nightCover.id = "night-cover";
-        nightCover.style.cssText = "position:fixed;inset:0;background:#000;z-index:2147483647";
-        document.body.appendChild(nightCover);
-      }
-    } else if (nightCover) {
-      nightCover.remove();
-      nightCover = null;
-    }
-  };
-
   const startTimers = () => {
     if (!clockTimer) clockTimer = setInterval(updateClock, 1000);
     if (!refreshTimer) refreshTimer = setInterval(refresh, 15000);
@@ -463,28 +480,64 @@ if (typeof document !== "undefined") {
     refreshTimer = null;
   };
 
-  const applyPhase = () => {
-    const now = isNight();
-    if (now === night) return; // no change -> no DOM mutation -> no repaint
-    night = now;
-    if (now) {
-      stopTimers();
-      showCover(true);
-    } else {
-      showCover(false);
-      updateClock();
-      refresh();
-      startTimers();
-    }
-  };
+  if (!kiosk.enabled) {
+    // Ordinary visitor: always the live dashboard, day or night.
+    updateClock();
+    refresh();
+    startTimers();
+  } else {
+    // The wall display is dark during the animals' night. Powering the panel
+    // off at the compositor is not enough on its own: a kiosk that keeps
+    // repainting (the clock ticks every second) makes wlroots re-power a
+    // DPMS-slept output within seconds. So at night we STOP all rendering,
+    // pause every CSS animation (room.css `.kiosk-night`), and cover the screen
+    // with a static black layer. With no new frames the host's `wlopm --off`
+    // can stick; if the panel is ever briefly re-powered it shows only black.
+    // This is a best-effort darkening, not a guarantee of a dark backlight.
+    let nightCover = null;
+    let night = null; // unknown until the first applyPhase()
 
-  applyPhase();
-  // Low-frequency watcher. It only touches the DOM when the phase flips, so at
-  // night it produces no frames and the panel can stay powered down; by day the
-  // 1s clock and 15s refresh timers above do the repainting.
-  setInterval(applyPhase, 60000);
+    const showCover = (on) => {
+      if (on) {
+        document.body.classList.add("kiosk-night");
+        if (!nightCover) {
+          nightCover = document.createElement("div");
+          nightCover.id = "night-cover";
+          nightCover.style.cssText = "position:fixed;inset:0;background:#000;z-index:2147483647";
+          document.body.appendChild(nightCover);
+        }
+      } else {
+        document.body.classList.remove("kiosk-night");
+        if (nightCover) {
+          nightCover.remove();
+          nightCover = null;
+        }
+      }
+    };
+
+    const applyPhase = () => {
+      const now = isNightHour(new Date().getHours(), kiosk.nightStart, kiosk.dayStart);
+      if (now === night) return; // no change -> no DOM mutation -> no repaint
+      night = now;
+      if (now) {
+        stopTimers();
+        showCover(true);
+      } else {
+        showCover(false);
+        updateClock();
+        refresh();
+        startTimers();
+      }
+    };
+
+    applyPhase();
+    // Low-frequency watcher. It only touches the DOM when the phase flips, so at
+    // night it produces no frames and the panel can stay powered down; by day the
+    // 1s clock and 15s refresh timers above do the repainting.
+    setInterval(applyPhase, 60000);
+  }
 }
 
 if (typeof module !== "undefined") {
-  module.exports = { ageLabel, careSummaryState, dashboardState, buildMessages };
+  module.exports = { ageLabel, careSummaryState, dashboardState, buildMessages, kioskSettings, isNightHour };
 }

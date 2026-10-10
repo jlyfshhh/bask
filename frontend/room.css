@@ -213,6 +213,17 @@ h2 { margin-bottom: 0; font-size: clamp(25px, 2.75vh, 40px); letter-spacing: -.0
   to { transform: translateX(-100%); }
 }
 
+/* Kiosk night blackout (room.js adds .kiosk-night to <body> only when the page was
+   opened with ?kiosk=1 and it is night). The black cover alone does not stop the
+   ticker's infinite animation from producing frames underneath it, and any frame
+   can re-power a DPMS-slept display — so freeze every animation and transition. */
+.kiosk-night *,
+.kiosk-night *::before,
+.kiosk-night *::after {
+  animation-play-state: paused !important;
+  transition: none !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ticker-track { animation: none; padding-left: 0; }
   .progress-track span { transition: none; }

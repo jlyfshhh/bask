@@ -6,7 +6,10 @@
 # Wire this into autostart (e.g. ~/.config/wayfire.ini, ~/.xinitrc, or a
 # systemd --user service) after the web service is up.
 set -u
-URL="http://localhost:8080/room.html"
+# `?kiosk=1` opts this wall display into the 20:00–08:00 night blackout. Ordinary
+# phone/browser visits to room.html (without the flag) stay live around the clock.
+# Append `&night=START-END` (24h hours) to change the window from the 20-8 default.
+URL="http://localhost:8080/room.html?kiosk=1"
 
 # Wait for the web server to answer before opening the browser. cog does NOT
 # auto-retry a failed load, and uvicorn's cold start on a Pi Zero W is ~30-40s,
