@@ -49,22 +49,43 @@ case "$command" in
         [[ "${MOCK_FAIL:-}" != pull ]]
         ;;
       *" down --remove-orphans")
-        for service in bask bask-scanner; do
+        for service in bask bask-scanner bask-init; do
           set_value "$service.exists" false
           set_value "$service.running" false
         done
         ;;
       *" up -d --no-build --pull never")
-        for service in bask bask-scanner; do
+        # The prior Compose graph can only recreate services it actually defined;
+        # `.old_image` marks those. A rollback to a two-service release therefore
+        # never resurrects an init service that release never had.
+        for service in bask bask-scanner bask-init; do
+          [[ -f "$state/$service.old_image" ]] || continue
           set_value "$service.exists" true
-          set_value "$service.running" true
-          set_value "$service.health" healthy
           set_value "$service.oom" false
           set_value "$service.image_id" "$(value "$service.old_image" "sha256:old-$service")"
+          if [[ "$service" == bask-init ]]; then
+            set_value "$service.running" false
+            set_value "$service.exitcode" 0
+          else
+            set_value "$service.running" true
+            set_value "$service.health" healthy
+          fi
         done
         ;;
       *" up -d")
         [[ "${MOCK_FAIL:-}" != up ]] || exit 20
+        # Compose runs the one-shot init first and only starts the web once it
+        # has exited successfully. Model that gate: a failing init aborts `up`.
+        set_value bask-init.exists true
+        set_value bask-init.running false
+        set_value bask-init.oom false
+        set_value bask-init.image_id "sha256:new-bask-init"
+        set_value bask-init.image_ref "ghcr.io/jlyfshhh/bask:latest"
+        if [[ "${MOCK_FAIL:-}" == init ]]; then
+          set_value bask-init.exitcode 1
+          exit 1
+        fi
+        set_value bask-init.exitcode 0
         for service in bask bask-scanner; do
           set_value "$service.exists" true
           set_value "$service.running" true
@@ -80,6 +101,7 @@ case "$command" in
         fi
         ;;
       *" stop bask-scanner") set_value bask-scanner.running false ;;
+      *" stop bask-init") set_value bask-init.running false ;;
       *" stop bask") set_value bask.running false ;;
       *" stop")
         if [[ "${MOCK_FAIL:-}" == stop ]]; then
@@ -88,11 +110,12 @@ case "$command" in
           set_value bask.running false
           exit 21
         fi
-        for service in bask bask-scanner; do
+        for service in bask bask-scanner bask-init; do
           [[ "$(value "$service.exists" false)" != true ]] || set_value "$service.running" false
         done
         ;;
       *" rm -sf bask-scanner") set_value bask-scanner.exists false; set_value bask-scanner.running false ;;
+      *" rm -sf bask-init") set_value bask-init.exists false; set_value bask-init.running false ;;
       *" rm -sf bask") set_value bask.exists false; set_value bask.running false ;;
       *" logs --tail=80") exit 0 ;;
       *) echo "Unexpected fake Compose invocation: $joined" >&2; exit 97 ;;
@@ -112,7 +135,7 @@ case "$command" in
       *'if eq .Destination "/data"'*) printf '%s\n' "${MOCK_DATA_MOUNT:-$CURRENT_INSTALL/data}" ;;
       *'.Mounts'*)
         case "$service" in
-          bask) printf '%s|/data|true\n' "${MOCK_DATA_MOUNT:-$CURRENT_INSTALL/data}" ;;
+          bask|bask-init) printf '%s|/data|true\n' "${MOCK_DATA_MOUNT:-$CURRENT_INSTALL/data}" ;;
           bask-scanner)
             if [[ "${MOCK_FAIL:-}" == boundary ]]; then
               printf '%s|/data|true\n/var/run/dbus/system_bus_socket|/var/run/dbus/system_bus_socket|true\n' "${MOCK_DATA_MOUNT:-$CURRENT_INSTALL/data}"
@@ -124,9 +147,12 @@ case "$command" in
         ;;
       '{{.Image}}') value "$service.image_id" "sha256:new-$service" ;;
       '{{.Config.Image}}') value "$service.image_ref" 'ghcr.io/jlyfshhh/bask:latest' ;;
-      *'com.docker.compose.project.working_dir'*) printf '%s\n' "${MOCK_WORKING_DIR:-$CURRENT_INSTALL}" ;;
+      # Per-service working-directory label so a single foreign container (for
+      # example only bask-init) can be modelled as belonging to another project.
+      *'com.docker.compose.project.working_dir'*) printf '%s\n' "$(value "$service.working_dir" "${MOCK_WORKING_DIR:-$CURRENT_INSTALL}")" ;;
       '{{.State.Running}}') value "$service.running" true ;;
       '{{.State.OOMKilled}}') value "$service.oom" false ;;
+      '{{.State.ExitCode}}') value "$service.exitcode" 0 ;;
       '{{.State.Status}}')
         [[ "$(value "$service.running" false)" == true ]] && printf running || printf exited
         ;;
@@ -134,11 +160,30 @@ case "$command" in
         [[ "$service" == bask-scanner ]] && value "$service.running" true | sed 's/^true$/running/; s/^false$/exited/' || value "$service.health" healthy
         ;;
       '{{.Config.User}}')
-        case "$service" in bask-scanner) printf '0:0' ;; *) printf '%s:%s' "$(id -u)" "$(id -g)" ;; esac
+        case "$service" in bask-scanner|bask-init) printf '0:0' ;; *) printf '%s:%s' "$(id -u)" "$(id -g)" ;; esac
         ;;
       '{{.HostConfig.ReadonlyRootfs}}') printf true ;;
-      '{{.HostConfig.NetworkMode}}') [[ "$service" == bask-scanner ]] && printf none || printf default ;;
-      '{{json .HostConfig.CapAdd}}') [[ "$service" == bask-scanner ]] && printf '["DAC_OVERRIDE"]' || printf 'null' ;;
+      '{{.HostConfig.NetworkMode}}')
+        case "$service" in bask-scanner|bask-init) printf none ;; *) printf default ;; esac
+        ;;
+      # Capabilities are reported with the daemon's CAP_ spelling and in Docker's
+      # own ordering (DAC_OVERRIDE before CHOWN), so this also exercises the
+      # installer's order- and prefix-independent normalisation. The scanner now
+      # carries both DAC_OVERRIDE and CHOWN; init carries CHOWN and
+      # DAC_READ_SEARCH; the network-facing web keeps none.
+      '{{json .HostConfig.CapAdd}}')
+        case "$service" in
+          bask-scanner)
+            if [[ "${MOCK_EXTRA_SCANNER_CAP:-false}" == true ]]; then
+              printf '["CAP_DAC_OVERRIDE","CAP_CHOWN","CAP_SYS_ADMIN"]'
+            else
+              printf '["CAP_DAC_OVERRIDE","CAP_CHOWN"]'
+            fi
+            ;;
+          bask-init) printf '["CAP_CHOWN","CAP_DAC_READ_SEARCH"]' ;;
+          *) printf 'null' ;;
+        esac
+        ;;
       '{{json .HostConfig.CapDrop}}') printf '["ALL"]' ;;
       '{{json .HostConfig.SecurityOpt}}') printf '["no-new-privileges:true"]' ;;
       # The audit asks which AppArmor profile is actually applied, and on a
@@ -226,6 +271,22 @@ printf 'chown %s\n' "$*" >> "${MOCK_DOCKER_STATE:?}/calls"
 exit 0
 SH
 
+# A transparent pass-through to the real git, except it can be told to fail on a
+# chosen subcommand so a retained-data reinstall can be interrupted mid-flight
+# (after the .git is placed) to prove the rollback leaves data untouched.
+cat > "$bin/git" <<'SH'
+#!/usr/bin/env bash
+if [[ -n "${MOCK_FAIL_REINSTALL:-}" ]]; then
+  for a in "$@"; do
+    if [[ "$a" == "$MOCK_FAIL_REINSTALL" ]]; then
+      echo "mock git failure on '$MOCK_FAIL_REINSTALL'" >&2
+      exit 33
+    fi
+  done
+fi
+exec /usr/bin/git "$@"
+SH
+
 chmod +x "$bin"/*
 
 write_env() {
@@ -258,7 +319,7 @@ seed_update() {
   sqlite3 "$directory/data/readings.db" 'CREATE TABLE readings(id INTEGER PRIMARY KEY, value REAL); INSERT INTO readings(value) VALUES(72.5);'
   cp "$directory/.env" "$fixture/original.env"
   cp "$directory/data/config.json" "$fixture/original.config"
-  for service in bask bask-scanner; do
+  for service in bask bask-scanner bask-init; do
     printf true > "$state/$service.exists"
     printf true > "$state/$service.running"
     printf healthy > "$state/$service.health"
@@ -269,6 +330,11 @@ seed_update() {
   done
   # Preserve and assert a deliberately stopped worker state.
   printf false > "$state/bask-scanner.running"
+  # The one-shot init has already run and exited cleanly in the prior install:
+  # present, not running, exit 0. A `.old_image` is what tells the fake prior
+  # Compose graph which services it is allowed to recreate on rollback.
+  printf false > "$state/bask-init.running"
+  printf 0 > "$state/bask-init.exitcode"
 }
 
 run_deploy() {
@@ -389,8 +455,10 @@ cmp "$pull/original.config" "$pull/bask/data/config.json"
 echo "  verified config and SQLite backup precedes every image pull"
 
 # Startup, health, and runtime-boundary failures restore exact config, image
-# IDs, the stopped scanner state, and the old two-service graph.
-for failure in stop up health boundary; do
+# IDs, the stopped scanner state, and the prior three-service graph. `init` is
+# the one-shot data-ownership repair: a non-zero exit from it must also roll the
+# whole update back rather than start the web against a /data it could not fix.
+for failure in stop up init health boundary; do
   fixture="$work/fail-$failure"
   mkdir -p "$fixture/home"
   seed_update "$fixture"
@@ -400,7 +468,55 @@ for failure in stop up health boundary; do
   fi
   assert_rollback "$fixture"
 done
-echo "  startup, health, and boundary failures roll back exactly"
+echo "  startup, init, health, and boundary failures roll back exactly"
+
+# The scanner now carries exactly CHOWN and DAC_OVERRIDE. A capability the audit
+# does not expect — here an extra CAP_SYS_ADMIN — must fail the boundary and roll
+# back, so the normalised set comparison rejects extras rather than only checking
+# that the two required names are present.
+extra_cap="$work/extra-scanner-cap"
+mkdir -p "$extra_cap/home"
+seed_update "$extra_cap"
+if MOCK_EXTRA_SCANNER_CAP=true run_deploy "$extra_cap" > "$extra_cap/out" 2> "$extra_cap/err"; then
+  echo "A scanner carrying an unexpected extra capability passed the boundary audit." >&2
+  exit 1
+fi
+assert_rollback "$extra_cap"
+echo "  an unexpected extra scanner capability fails the boundary audit and rolls back"
+
+# A prior install that predates the init service: only web and scanner exist. A
+# failed update that introduced init must roll back to exactly that two-service
+# graph and must not strand the candidate's init container.
+two_service="$work/two-service"
+mkdir -p "$two_service/home"
+seed_update "$two_service"
+printf false > "$two_service/docker/bask-init.exists"
+printf false > "$two_service/docker/bask-init.running"
+rm -f "$two_service/docker/bask-init.old_image"
+if MOCK_FAIL=health run_deploy "$two_service" > "$two_service/out" 2> "$two_service/err"; then
+  echo "A failed update over a prior two-service install reported success." >&2
+  exit 1
+fi
+assert_rollback "$two_service"
+[[ "$(cat "$two_service/docker/bask-init.exists")" == false ]] || {
+  echo "Rollback to a two-service install left the candidate's init container behind." >&2
+  exit 1
+}
+echo "  rollback to a prior two-service install does not strand the candidate init service"
+
+# A globally named bask-init from another Compose project must be refused before
+# any mutation, exactly as a foreign web or scanner container already is.
+foreign_init="$work/foreign-init"
+mkdir -p "$foreign_init/home" "$foreign_init/other"
+seed_update "$foreign_init"
+printf '%s' "$foreign_init/other" > "$foreign_init/docker/bask-init.working_dir"
+if run_deploy "$foreign_init" > "$foreign_init/out" 2> "$foreign_init/err"; then
+  echo "A foreign bask-init container was accepted as this Bask deployment." >&2
+  exit 1
+fi
+assert_no_grep -q ' pull$' "$foreign_init/docker/calls"
+assert_no_grep -q ' stop$' "$foreign_init/docker/calls"
+echo "  a foreign init container is refused before any mutation"
 
 # An older release may not define the scanner service at all. Rollback must not
 # ask that older Compose file to resolve the candidate-only name, and must leave
@@ -672,6 +788,122 @@ run_get_bask >/dev/null
 [[ "$(git -C "$checkout" rev-parse HEAD)" == "$new_head" ]]
 [[ "$(cat "$checkout/release-marker")" == new ]]
 echo "  staged Git update advances the checkout only after verified deployment"
+
+# F13: a directory a normal uninstall left behind — data/, backups/, and .env
+# kept, .git removed, with the retained-data marker — reinstalls in place and
+# preserves records. Arbitrary non-checkout directories are still refused, and a
+# reinstall that fails partway rolls back with the preserved data untouched.
+seed_retained_dir() {
+  local dir="$1" marker_line="${2:-}"
+  rm -rf -- "$dir"
+  mkdir -p -- "$dir/data" "$dir/backups"
+  write_env "$dir"
+  # A sentinel the fake Compose never rewrites, so data preservation is asserted
+  # independently of the config-mutation the mock performs on a successful up.
+  printf 'KEEP-THESE-RECORDS\n' > "$dir/data/records.keep"
+  printf '{"keeper":{"salt":"s","hash":"h"},"records":"kept"}\n' > "$dir/data/config.json"
+  sqlite3 "$dir/data/readings.db" 'CREATE TABLE readings(id INTEGER); INSERT INTO readings VALUES(7);'
+  printf 'an old archive\n' > "$dir/backups/bask-old.tar.gz"
+  [[ -z "$marker_line" ]] || printf '%s\n' "$marker_line" > "$dir/.animal-room-retained-data"
+}
+
+run_get_bask_dir() {  # dir, [extra VAR=val ...]
+  local dir="$1"; shift
+  local docker_state="$dir.docker"
+  rm -rf -- "$docker_state"; mkdir -p -- "$docker_state"
+  env PATH="$bin:/usr/bin:/bin" \
+    HOME="$work/home" \
+    BASK_REPO="$repo" \
+    BASK_BRANCH=main \
+    BASK_INSTALL_DIR="$dir" \
+    BASK_INSTALLER_TEST_MODE=true \
+    BASK_INSTALL_SKIP_PACKAGES=true \
+    BASK_INSTALL_HEALTH_ATTEMPTS=2 \
+    BASK_INSTALL_HEALTH_INTERVAL=0 \
+    MOCK_DOCKER_STATE="$docker_state" \
+    CURRENT_INSTALL="$dir" \
+    "$@" \
+    bash "$root/get-bask.sh"
+}
+
+assert_retained_data_intact() {  # dir
+  local dir="$1"
+  [[ "$(cat "$dir/data/records.keep" 2>/dev/null)" == "KEEP-THESE-RECORDS" ]] || {
+    echo "The retained data/records.keep was lost." >&2; exit 1; }
+  [[ "$(cat "$dir/backups/bask-old.tar.gz" 2>/dev/null)" == "an old archive" ]] || {
+    echo "The retained backups archive was lost." >&2; exit 1; }
+  [[ -f "$dir/.env" ]] || { echo "The retained .env was lost." >&2; exit 1; }
+  [[ "$(sqlite3 "$dir/data/readings.db" 'SELECT id FROM readings;' 2>/dev/null)" == 7 ]] || {
+    echo "The retained readings.db row was lost." >&2; exit 1; }
+}
+
+# A valid marker reinstalls in place: the checkout returns at the published HEAD,
+# the records survive, and the marker is consumed.
+retained_ok="$work/retained-valid"
+seed_retained_dir "$retained_ok" "animal-room retained-data v1"
+run_get_bask_dir "$retained_ok" >/dev/null
+[[ -d "$retained_ok/.git" ]] || { echo "Retained-data reinstall left no Git checkout." >&2; exit 1; }
+[[ "$(git -C "$retained_ok" rev-parse HEAD)" == "$new_head" ]] || {
+  echo "Retained-data reinstall did not land on the published HEAD." >&2; exit 1; }
+[[ -f "$retained_ok/compose.yaml" ]] || { echo "Reinstall did not materialise tracked files." >&2; exit 1; }
+[[ ! -e "$retained_ok/.animal-room-retained-data" ]] || {
+  echo "The retained-data marker was not removed after a successful reinstall." >&2; exit 1; }
+assert_retained_data_intact "$retained_ok"
+echo "  a valid retained-data directory reinstalls in place and preserves records"
+
+# A directory with other files but no marker is still refused, untouched.
+retained_none="$work/retained-no-marker"
+seed_retained_dir "$retained_none" ""
+printf 'stray\n' > "$retained_none/leftover.txt"
+if run_get_bask_dir "$retained_none" > "$retained_none.out" 2> "$retained_none.err"; then
+  echo "A non-checkout directory without a marker was accepted." >&2
+  exit 1
+fi
+[[ ! -d "$retained_none/.git" ]] || { echo "A refused directory gained a .git." >&2; exit 1; }
+assert_retained_data_intact "$retained_none"
+
+# A marker whose version line does not match exactly is not trusted.
+retained_badver="$work/retained-bad-version"
+seed_retained_dir "$retained_badver" "animal-room retained-data v2"
+if run_get_bask_dir "$retained_badver" > "$retained_badver.out" 2> "$retained_badver.err"; then
+  echo "A marker with the wrong version line was trusted." >&2
+  exit 1
+fi
+[[ ! -d "$retained_badver/.git" ]]
+assert_retained_data_intact "$retained_badver"
+
+# A marker without the records it promises is not trusted either.
+retained_bare="$work/retained-bare-marker"
+rm -rf -- "$retained_bare"; mkdir -p -- "$retained_bare"
+printf 'animal-room retained-data v1\n' > "$retained_bare/.animal-room-retained-data"
+if run_get_bask_dir "$retained_bare" > "$retained_bare.out" 2> "$retained_bare.err"; then
+  echo "A bare marker with no preserved data was trusted." >&2
+  exit 1
+fi
+[[ ! -d "$retained_bare/.git" ]]
+echo "  non-checkout directories without a valid marker are still refused"
+
+# A reinstall interrupted after the checkout metadata is placed must roll back,
+# removing only what it added and leaving the preserved records untouched. The
+# marker survives so the keeper can simply retry.
+retained_fail="$work/retained-failed"
+seed_retained_dir "$retained_fail" "animal-room retained-data v1"
+if MOCK_FAIL_REINSTALL=reset run_get_bask_dir "$retained_fail" > "$retained_fail.out" 2> "$retained_fail.err"; then
+  echo "A reinstall that failed mid-flight reported success." >&2
+  exit 1
+fi
+[[ ! -e "$retained_fail/.git" ]] || { echo "A failed reinstall left a partial .git behind." >&2; exit 1; }
+[[ ! -e "$retained_fail/compose.yaml" ]] || {
+  echo "A failed reinstall left tracked files behind instead of rolling them back." >&2; exit 1; }
+[[ -f "$retained_fail/.animal-room-retained-data" ]] || {
+  echo "A failed reinstall removed the retained-data marker, blocking a retry." >&2; exit 1; }
+assert_retained_data_intact "$retained_fail"
+# And the rolled-back directory can be reinstalled cleanly on a retry.
+run_get_bask_dir "$retained_fail" >/dev/null
+[[ -d "$retained_fail/.git" && "$(git -C "$retained_fail" rev-parse HEAD)" == "$new_head" ]] || {
+  echo "A rolled-back retained directory could not be reinstalled on retry." >&2; exit 1; }
+assert_retained_data_intact "$retained_fail"
+echo "  a failed retained-data reinstall rolls back with data intact and can be retried"
 
 echo "Standalone Bask installer tests passed."
 

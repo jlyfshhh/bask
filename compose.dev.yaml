@@ -12,3 +12,9 @@ services:
   bask-scanner:
     build: .
     image: bask-local:dev
+  # The one-shot init runs the same code as the other two and must be the same
+  # locally built image, or a build would mix a fresh web/scanner with whatever
+  # published init image the registry last served.
+  bask-init:
+    build: .
+    image: bask-local:dev

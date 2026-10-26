@@ -54,11 +54,23 @@ services:
       retries: 6
       start_period: 30s
 
-  # One-shot root step that hands /data and any readings.db* sidecars back to the
-  # web's uid before the web starts. This is the only place a root process touches
-  # ownership at startup; it holds just CAP_CHOWN, writes nothing else, and exits.
-  # It closes the cold-start/update deadlock where pre-existing root-owned WAL
-  # files block the non-root web while the scanner is gated behind the web.
+  # One-shot root step that hands /data and the readings.db WAL family back to
+  # the web's uid before the web starts. This is the only place a root process
+  # touches ownership at startup; it writes nothing else and exits. It closes the
+  # cold-start/update deadlock where pre-existing root-owned WAL files block the
+  # non-root web while the scanner is gated behind the web.
+  #
+  # CAP_CHOWN alone is not enough: the stranded state is a web-owned mode-0700
+  # /data holding root-owned sidecars, and with every other capability dropped
+  # root cannot even traverse or list that directory — the old glob silently
+  # found nothing and the repair was a no-op that still exited 0. CAP_DAC_READ_
+  # SEARCH is the minimal addition that grants exactly the directory read/search
+  # the repair needs (it bypasses read and directory search checks only, never
+  # the write checks DAC_OVERRIDE would also grant), and CAP_CHOWN performs the
+  # ownership change itself. An explicit allowlist replaces the glob so a file
+  # that cannot be read no longer disappears from the work set, and a required
+  # repair that fails now exits non-zero so the web's dependency gate holds the
+  # deadlock open visibly instead of letting the web crash-loop.
   bask-init:
     image: ghcr.io/jlyfshhh/bask:${BASK_TAG:-latest}
     container_name: bask-init
@@ -68,8 +80,16 @@ services:
       - ALL
     cap_add:
       - CHOWN
+      - DAC_READ_SEARCH
     security_opt:
       - no-new-privileges:true
+    # The repair is purely local file ownership; like the scanner it needs no
+    # network, and it gets the same bounded pids/memory its neighbours carry.
+    network_mode: none
+    pids_limit: 64
+    mem_limit: ${BASK_INIT_MEMORY_LIMIT:-128m}
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=16m,mode=0700
     environment:
       BASK_UID: "${BASK_UID:-10001}"
       BASK_GID: "${BASK_GID:-10001}"
@@ -77,14 +97,32 @@ services:
       - python
       - -c
       - |
-        import os, glob
+        import os, sys
         uid = int(os.environ.get("BASK_UID", "10001"))
         gid = int(os.environ.get("BASK_GID", "10001"))
-        for p in ["/data", *glob.glob("/data/readings.db*")]:
+        # An explicit allowlist, never a glob: a file root cannot read must stay
+        # in the work set and surface as a failure, not silently vanish from a
+        # directory listing that itself needed a capability to read.
+        required = ["/data"]
+        optional = ["/data/readings.db", "/data/readings.db-wal",
+                    "/data/readings.db-shm"]
+        failures = []
+        if not os.path.isdir("/data"):
+            print("bask-init: /data is not present", flush=True)
+            sys.exit(1)
+        for p in required + optional:
+            if p in optional and not os.path.lexists(p):
+                continue
             try:
                 os.chown(p, uid, gid)
             except OSError as exc:
                 print("bask-init: could not chown %s: %s" % (p, exc), flush=True)
+                failures.append(p)
+        if failures:
+            # A repair that was needed but could not be completed must fail the
+            # one-shot so `service_completed_successfully` blocks the web rather
+            # than letting it start against files it cannot open.
+            sys.exit(1)
     volumes:
       - ${BASK_DATA_PATH:-./data}:/data
     restart: "no"

@@ -87,4 +87,39 @@ else
   echo "  capability check skipped — no probe image available"
 fi
 
+# The installer's boundary audit compares an exact capability set per service.
+# Confirm the real shipped Compose, resolved by real Docker Compose, declares
+# the sets that audit expects: the scanner adds CHOWN and DAC_OVERRIDE, the
+# one-shot init adds CHOWN and DAC_READ_SEARCH (and no more), and the init
+# service exists at all. A drift here is exactly the F03/F06 break where the
+# installer and the shipped Compose disagreed and every real install rolled back.
+if resolved_json="$(cd "$stage" && docker compose --project-directory "$stage" \
+      --env-file "$stage/.env" -f "$stage/compose.yaml" config --format json 2>/dev/null)" \
+   && [[ -n "$resolved_json" ]]; then
+  if ! printf '%s' "$resolved_json" | python3 - <<'PY'
+import json, sys
+d = json.load(sys.stdin)
+svc = d["services"]
+missing = {"bask", "bask-scanner", "bask-init"} - set(svc)
+assert not missing, "the shipped compose is missing services: %s" % sorted(missing)
+def caps(name):
+    return {c.replace("CAP_", "") for c in (svc[name].get("cap_add") or [])}
+assert caps("bask-scanner") == {"CHOWN", "DAC_OVERRIDE"}, \
+    "scanner cap_add is %s, not the audited {CHOWN, DAC_OVERRIDE}" % sorted(caps("bask-scanner"))
+assert caps("bask-init") == {"CHOWN", "DAC_READ_SEARCH"}, \
+    "init cap_add is %s, not the audited {CHOWN, DAC_READ_SEARCH}" % sorted(caps("bask-init"))
+assert (svc["bask"].get("cap_add") or []) == [], "the web service must add no capabilities"
+for name in ("bask", "bask-scanner", "bask-init"):
+    assert "ALL" in (svc[name].get("cap_drop") or []), "%s must drop ALL capabilities" % name
+assert svc["bask-init"].get("network_mode") == "none", "the init service must have no network"
+PY
+  then
+    echo "The shipped compose.yaml does not declare the capability sets the installer audits." >&2
+    exit 1
+  fi
+  echo "  the shipped compose declares the audited capability sets for all three services"
+else
+  echo "  resolved-capability check skipped — compose config --format json unavailable"
+fi
+
 echo "Compose contract tests passed."

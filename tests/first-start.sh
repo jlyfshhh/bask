@@ -106,25 +106,62 @@ echo "  /api/health responds, so the web is reading its own config and database"
 # the WAL sidecars back to the web uid, which needs CAP_CHOWN — without it the
 # chown fails EPERM, is swallowed, and the web can never reopen the database.
 echo "  web-recreate ownership regression (scanner keeps running)"
-# As root (the scanner's identity) create valid WAL sidecars, root-owned: the
-# exact state that stranded the web.
-docker exec -u 0 bask-scanner python - <<'PY'
-import os, sqlite3
+# Seed the exact adversarial state: valid WAL sidecars that EXIST on disk and are
+# root-owned. Two bugs made the old version of this prove nothing:
+#   * `docker exec` without -i never forwarded the heredoc, so this python ran an
+#     empty program and no root-owned sidecars were ever created;
+#   * a clean SQLite close checkpoints and can delete -wal/-shm, so even when it
+#     ran, the sidecars could vanish — and the assertion then accepted their
+#     absence, happily "passing" a case where no root-owned sidecars existed.
+# Forward stdin with -i, disable autocheckpoint, and hard-exit without a clean
+# close so the root-owned sidecars are still on disk for the reconcile to repair.
+docker exec -i -u 0 bask-scanner python - <<'PY'
+import os, sqlite3, sys
 c = sqlite3.connect("/data/readings.db", timeout=10)
 c.execute("PRAGMA journal_mode=WAL")
+c.execute("PRAGMA wal_autocheckpoint=0")
 c.execute("CREATE TABLE IF NOT EXISTS _probe(x)")
 c.execute("INSERT INTO _probe VALUES (1)")
-c.commit(); c.close()
+c.commit()
+# The main database stays web-owned (the web created it first); only the WAL
+# sidecars become root-owned, which is the state that stranded a recreated web.
 for suffix in ("-wal", "-shm"):
     p = "/data/readings.db" + suffix
     if os.path.exists(p):
         os.chown(p, 0, 0)
+ok = all(os.path.exists("/data/readings.db" + s) for s in ("-wal", "-shm"))
+# Do NOT close: a clean close would checkpoint and could remove the sidecars we
+# must leave behind. Hard-exit so they persist on disk, root-owned.
+sys.stdout.flush()
+os._exit(0 if ok else 17)
 PY
+if [[ $? -ne 0 ]]; then
+  echo "Could not seed root-owned WAL sidecars; the adversarial state was never created." >&2
+  exit 1
+fi
+# Both sidecars must EXIST and be root-owned BEFORE reconciliation, or there is
+# nothing adversarial to reconcile and the test is vacuous.
+for suffix in -wal -shm; do
+  f="$work/data/readings.db$suffix"
+  if [[ ! -e "$f" ]]; then
+    echo "readings.db$suffix was not seeded; the WAL adversarial state is missing." >&2
+    exit 1
+  fi
+  owner="$(stat -c '%u' "$f")"
+  if [[ "$owner" != 0 ]]; then
+    echo "readings.db$suffix is uid $owner before reconcile, not root — adversarial state not seeded." >&2
+    exit 1
+  fi
+done
+echo "  seeded root-owned WAL sidecars that genuinely exist on disk"
 # The scanner's reconcile must hand them back to the web uid (needs CAP_CHOWN).
 docker exec -u 0 bask-scanner python -c "import sys; sys.path.insert(0,'/app/scanner'); import db; db._reconcile_owner()"
 for suffix in -wal -shm; do
   f="$work/data/readings.db$suffix"
-  [[ -e "$f" ]] || continue
+  if [[ ! -e "$f" ]]; then
+    echo "readings.db$suffix disappeared during reconcile; it must be reconciled, not removed." >&2
+    exit 1
+  fi
   owner="$(stat -c '%u' "$f")"
   if [[ "$owner" != "$want_uid" ]]; then
     echo "readings.db$suffix is uid $owner after reconcile, not web uid $want_uid — the scanner cannot chown (missing CAP_CHOWN?)." >&2
@@ -146,5 +183,90 @@ if [[ -z "$recreated" ]]; then
   exit 1
 fi
 echo "  the web recovered healthy after a recreate alongside the running scanner"
+
+# F04 regression: the both-services-stopped cold start. With every service down,
+# existing data can be a web-owned mode-0700 /data holding root-owned WAL
+# sidecars (a prior root scanner's leftovers). The one-shot bask-init must repair
+# ownership before the web starts — which needs CAP_DAC_READ_SEARCH just to
+# traverse and read the 0700 directory. CAP_CHOWN alone cannot, which is why the
+# old glob silently repaired nothing and still exited 0. Prove recovery end to
+# end: without the fix, init either silently does nothing (web crash-loops and
+# never goes healthy) or, with the explicit allowlist, fails non-zero and the
+# web never starts. Either way this cold start would not become healthy.
+echo "  cold-start repair regression (both services stopped, 0700 /data, root-owned WAL)"
+compose down >/dev/null 2>&1
+# The test user cannot chown to root, so seed the stranded state from a transient
+# root container: valid root-owned WAL sidecars under a web-owned 0700 /data.
+docker run --rm -i -u 0 -v "$work/data:/data" -e BASK_DATA_DIR=/data \
+  --entrypoint python "$image" - <<'PY'
+import os, sqlite3, sys
+c = sqlite3.connect("/data/readings.db", timeout=10)
+c.execute("PRAGMA journal_mode=WAL")
+c.execute("PRAGMA wal_autocheckpoint=0")
+c.execute("CREATE TABLE IF NOT EXISTS _probe(x)")
+c.execute("INSERT INTO _probe VALUES (1)")
+c.commit()
+for suffix in ("-wal", "-shm"):
+    p = "/data/readings.db" + suffix
+    if os.path.exists(p):
+        os.chown(p, 0, 0)
+# Lock the private directory root must traverse and read to reach the sidecars.
+os.chmod("/data", 0o700)
+ok = all(os.path.exists("/data/readings.db" + s) for s in ("-wal", "-shm"))
+sys.stdout.flush()
+os._exit(0 if ok else 17)
+PY
+if [[ $? -ne 0 ]]; then
+  echo "Could not seed the cold-start adversarial state." >&2
+  exit 1
+fi
+for suffix in -wal -shm; do
+  owner="$(stat -c '%u' "$work/data/readings.db$suffix" 2>/dev/null || echo missing)"
+  if [[ "$owner" != 0 ]]; then
+    echo "cold-start setup: readings.db$suffix is '$owner', not root — adversarial state not seeded." >&2
+    exit 1
+  fi
+done
+echo "  seeded a web-owned 0700 /data with root-owned WAL sidecars, all services stopped"
+# Cold start. Compose runs bask-init to completion before the web; a failed init
+# (for example CAP_DAC_READ_SEARCH missing) aborts `up` here.
+if ! compose up -d >/dev/null 2>&1; then
+  echo "The cold start did not come up; bask-init could not repair ownership under 0700 /data." >&2
+  docker logs bask-init 2>&1 | tail -20 >&2 || true
+  exit 1
+fi
+init_status="$(docker inspect --format '{{.State.Status}}' bask-init 2>/dev/null || true)"
+init_exit="$(docker inspect --format '{{.State.ExitCode}}' bask-init 2>/dev/null || true)"
+if [[ "$init_status" != exited || "$init_exit" != 0 ]]; then
+  echo "bask-init did not complete the cold-start repair cleanly (status=${init_status:-missing}, exit=${init_exit:-missing})." >&2
+  docker logs bask-init 2>&1 | tail -20 >&2 || true
+  exit 1
+fi
+# Ownership must be back with the web uid. bask-init runs and exits before the
+# web starts, so any sidecar still on disk must already be web-owned; a sidecar
+# the first healthy web open folds away is also acceptable — what must never
+# survive is a root-owned sidecar the non-root web cannot read.
+for suffix in -wal -shm; do
+  f="$work/data/readings.db$suffix"
+  [[ -e "$f" ]] || continue
+  owner="$(stat -c '%u' "$f")"
+  if [[ "$owner" != "$want_uid" ]]; then
+    echo "after the cold-start repair readings.db$suffix is uid $owner, not web uid $want_uid." >&2
+    exit 1
+  fi
+done
+cold=""
+for _ in $(seq 1 30); do
+  state="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}nohc{{end}}' bask 2>/dev/null || true)"
+  if [[ "$state" == "healthy" ]]; then cold=1; break; fi
+  if [[ "$state" == "unhealthy" ]]; then break; fi
+  sleep 2
+done
+if [[ -z "$cold" ]]; then
+  echo "The web never became healthy on a cold start with pre-existing root-owned WAL under 0700 /data." >&2
+  docker logs bask 2>&1 | tail -20 >&2 || true
+  exit 1
+fi
+echo "  bask-init repaired ownership and the web came up healthy from a cold start"
 
 echo "First-start test passed."

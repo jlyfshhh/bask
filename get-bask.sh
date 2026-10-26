@@ -9,6 +9,18 @@ requested_install_dir="${BASK_INSTALL_DIR:-${BASK_DIR:-$HOME/bask}}"
 stage_root=""
 candidate_dir=""
 worktree_added=false
+retained_reinstall_active=false
+retained_git_placed=false
+retained_success=false
+retained_tracked_manifest=""
+
+# A directory that exists but is not a Git checkout is normally refused. The one
+# supported exception is a retained-data reinstall: a normal animal-room
+# uninstall keeps data/, backups/, and .env but removes .git, and leaves a marker
+# saying exactly that. These name the marker and the exact first line it must
+# carry to be trusted.
+RETAINED_DATA_MARKER=.animal-room-retained-data
+RETAINED_DATA_MARKER_LINE="animal-room retained-data v1"
 
 say() { printf '\n\033[1;38;5;208m==>\033[0m %s\n' "$1"; }
 die() { printf '\n\033[1;31mError:\033[0m %s\n' "$1" >&2; exit 1; }
@@ -50,6 +62,21 @@ install_path_is_protected() {
 cleanup_stage() {
   if [[ "$worktree_added" == true && -n "$candidate_dir" ]]; then
     git -C "$install_dir" worktree remove --force "$candidate_dir" >/dev/null 2>&1 || true
+  fi
+  if [[ "$retained_reinstall_active" == true && "$retained_success" != true &&
+        "$retained_git_placed" == true ]]; then
+    # A retained-data reinstall was interrupted after the repository metadata was
+    # placed. Remove only what the reinstall added — the .git directory and the
+    # tracked source files — so the keeper's data/, backups/, and .env are left
+    # exactly as they were and the marker stays in place for a clean retry.
+    # data/, backups/, and .env are git-ignored and never appear in the manifest.
+    rm -rf -- "$install_dir/.git"
+    if [[ -n "$retained_tracked_manifest" && -s "$retained_tracked_manifest" ]]; then
+      while IFS= read -r -d '' tracked; do
+        [[ -n "$tracked" ]] || continue
+        rm -f -- "$install_dir/$tracked"
+      done < "$retained_tracked_manifest"
+    fi
   fi
   [[ -z "$stage_root" || ! -d "$stage_root" ]] || rm -rf -- "$stage_root"
 }
@@ -112,6 +139,55 @@ validate_candidate() {
     die "The downloaded Bask shell scripts did not pass syntax validation."
 }
 
+# True only for a directory a normal uninstall left behind: the marker's first
+# line matches EXACTLY and the artifacts it implies are really present as regular
+# paths. A bare marker, a wrong version line, or arbitrary unrelated files all
+# return false, so the ordinary refusal still applies to anything else.
+retained_data_marker_valid() {
+  local dir="$1" marker="$1/$RETAINED_DATA_MARKER" first=""
+  [[ -f "$marker" && ! -L "$marker" ]] || return 1
+  IFS= read -r first < "$marker" || true
+  first="${first%$'\r'}"
+  [[ "$first" == "$RETAINED_DATA_MARKER_LINE" ]] || return 1
+  # Trust the marker only alongside the preserved records it promises — never
+  # arbitrary other files, and never through a symlink.
+  [[ -d "$dir/data" && ! -L "$dir/data" ]] || return 1
+  [[ -f "$dir/.env" && ! -L "$dir/.env" ]] || return 1
+  return 0
+}
+
+# Re-establish a Git checkout inside a directory a normal uninstall left behind,
+# preserving data/, backups/, and .env. Everything risky happens in a scratch
+# clone first; only after it validates is the repository metadata moved into
+# place and the tracked tree materialised over it. git never touches ignored
+# runtime data, so the records are left untouched. A failure at any point before
+# success leaves the marker and data intact for a clean retry (see cleanup_stage).
+retained_data_reinstall() {
+  local dir="$1"
+  say "Re-establishing the Bask checkout in place, preserving your records"
+  retained_reinstall_active=true
+  stage_root="$(mktemp -d "$install_parent/.bask-reinstall.XXXXXX")"
+  candidate_dir="$stage_root/candidate"
+  git clone --quiet --depth 1 --branch "$branch" "$repo" "$candidate_dir"
+  validate_candidate "$candidate_dir"
+  target_commit="$(git -C "$candidate_dir" rev-parse --verify HEAD)"
+  # Capture the tracked paths before the clone body is spent, so an interrupted
+  # reinstall removes exactly what it added and nothing that was preserved.
+  retained_tracked_manifest="$stage_root/tracked"
+  git -C "$candidate_dir" ls-files -z > "$retained_tracked_manifest"
+  mv -- "$candidate_dir/.git" "$dir/.git"
+  retained_git_placed=true
+  candidate_dir=""
+  git -C "$dir" checkout -f "$branch" >/dev/null
+  git -C "$dir" reset --hard "$target_commit" >/dev/null
+  # The directory is a valid checkout again. Drop the marker so a future run
+  # takes the ordinary update path, and mark success so a later deploy failure
+  # keeps this checkout and its data rather than tearing them down.
+  rm -f -- "$dir/$RETAINED_DATA_MARKER"
+  retained_success=true
+  candidate_dir="$dir"
+}
+
 existing=false
 previous_ref=""
 target_commit=""
@@ -146,9 +222,20 @@ if [[ -d "$install_dir/.git" ]]; then
   git -C "$install_dir" worktree add --quiet --detach "$candidate_dir" "$target_commit"
   worktree_added=true
   validate_candidate "$candidate_dir"
-else
-  [[ ! -e "$install_dir" ]] ||
+elif [[ -e "$install_dir" ]]; then
+  # The directory exists but is not a Git checkout. A normal animal-room
+  # uninstall produces exactly this: data/, backups/, and .env kept, .git
+  # removed, with a retained-data marker. Honour an explicit, validated marker by
+  # rebuilding the checkout in place; refuse anything else as before.
+  install_dir="$(cd -- "$install_dir" && pwd -P)"
+  install_path_is_protected "$install_dir" &&
+    die "The existing Bask directory resolves to an unsafe path: $install_dir."
+  if retained_data_marker_valid "$install_dir"; then
+    retained_data_reinstall "$install_dir"
+  else
     die "$install_dir exists but is not a Bask checkout. Move it or set BASK_INSTALL_DIR."
+  fi
+else
   say "Downloading and validating Bask for $install_dir"
   stage_root="$(mktemp -d "$install_parent/.bask-install.XXXXXX")"
   candidate_dir="$stage_root/candidate"

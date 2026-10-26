@@ -182,7 +182,13 @@ else
   : > "$state/compose.env"
 fi
 
-services=(bask bask-scanner)
+# All three Compose services are managed together: the network-facing web, the
+# isolated BLE scanner, and the one-shot root init that repairs /data ownership
+# before the web starts. Leaving init out meant a foreign container by that name
+# was never refused, its prior image/running state was never captured for an
+# exact rollback, and the candidate's init could survive a rollback to a release
+# that never defined it.
+services=(bask bask-scanner bask-init)
 previous_runtime=false
 for service in "${services[@]}"; do
   if docker inspect "$service" >/dev/null 2>&1; then
@@ -843,6 +849,19 @@ if ! candidate_compose up -d; then
   fail_with_rollback "Bask's updated containers could not start."
 fi
 
+# The one-shot init is a dependency gate for the web (service_completed_
+# successfully), so `up -d` already refuses to start the web if init exits
+# non-zero. Assert the exited-0 result directly as well, so a future change that
+# loosens that gate cannot let the web come up against a /data its init could
+# not repair. A healthy, long-lived web/scanner are checked below; init is the
+# one service that is supposed to run once and exit.
+init_status="$(docker inspect --format '{{.State.Status}}' bask-init 2>/dev/null || true)"
+init_exit="$(docker inspect --format '{{.State.ExitCode}}' bask-init 2>/dev/null || true)"
+if [[ "$init_status" != exited || "$init_exit" != 0 ]]; then
+  candidate_compose logs --tail=80 >&2 || true
+  fail_with_rollback "Bask's one-shot data-ownership repair did not complete cleanly (status=${init_status:-missing}, exit=${init_exit:-missing})."
+fi
+
 # Docker 29 reports capabilities by their kernel names — CAP_DAC_OVERRIDE —
 # where older daemons reported the bare DAC_OVERRIDE that this audit was written
 # against. Comparing the raw string made the check impossible to pass on a
@@ -853,44 +872,80 @@ strip_cap_prefix() {
   printf '%s' "${1//CAP_/}"
 }
 
+# Compare a `docker inspect` capability array against an exact expected set,
+# independent of ordering and of the daemon's CAP_ spelling (CAP_CHOWN == CHOWN).
+# A capability the audit does not expect fails the match just as a missing one
+# does, so the boundary cannot be widened without updating this list. `null` and
+# `[]` both normalise to the empty set; capability tokens are upper-case, so the
+# literal lowercase `null` is never mistaken for one.
+#
+# This replaced a raw string equality that accepted only `["DAC_OVERRIDE"]`. The
+# scanner now also needs CAP_CHOWN to hand the WAL sidecars back to the web, so
+# that frozen literal rejected the current, correct two-capability scanner and
+# rolled back every real install.
+caps_equal() {
+  local json; json="$(strip_cap_prefix "$1")"; shift
+  local actual want
+  # `grep` exits 1 on no match; under pipefail that would abort the installer for
+  # an empty/`null` capability array (the web's), so swallow the empty case — an
+  # empty set is a legitimate value to compare, not an error.
+  actual="$( { grep -oE '[A-Z][A-Z0-9_]*' <<<"$json" || true; } | sort -u | paste -sd',' -)"
+  want="$( { printf '%s\n' "$@" | grep -oE '[A-Z][A-Z0-9_]*' || true; } | sort -u | paste -sd',' -)"
+  [[ "$actual" == "$want" ]]
+}
+
 verify_container_boundary() {
   local web_mounts scanner_mounts web_user scanner_user web_read_only
   local web_caps_add web_caps_drop web_security
   local scanner_read_only scanner_network scanner_caps_add scanner_caps_drop scanner_security
-  local expected_data_mount scanner_bus_pattern unexpected_web unexpected_scanner
+  local init_mounts init_user init_read_only init_network init_caps_add init_caps_drop init_security
+  local expected_data_mount scanner_bus_pattern unexpected_web unexpected_scanner unexpected_init
   web_mounts="$(docker inspect --format '{{range .Mounts}}{{printf "%s|%s|%t\n" .Source .Destination .RW}}{{end}}' bask 2>/dev/null || true)"
   scanner_mounts="$(docker inspect --format '{{range .Mounts}}{{printf "%s|%s|%t\n" .Source .Destination .RW}}{{end}}' bask-scanner 2>/dev/null || true)"
+  init_mounts="$(docker inspect --format '{{range .Mounts}}{{printf "%s|%s|%t\n" .Source .Destination .RW}}{{end}}' bask-init 2>/dev/null || true)"
   web_user="$(docker inspect --format '{{.Config.User}}' bask 2>/dev/null || true)"
   scanner_user="$(docker inspect --format '{{.Config.User}}' bask-scanner 2>/dev/null || true)"
+  init_user="$(docker inspect --format '{{.Config.User}}' bask-init 2>/dev/null || true)"
   web_read_only="$(docker inspect --format '{{.HostConfig.ReadonlyRootfs}}' bask 2>/dev/null || true)"
   scanner_read_only="$(docker inspect --format '{{.HostConfig.ReadonlyRootfs}}' bask-scanner 2>/dev/null || true)"
+  init_read_only="$(docker inspect --format '{{.HostConfig.ReadonlyRootfs}}' bask-init 2>/dev/null || true)"
   web_caps_add="$(docker inspect --format '{{json .HostConfig.CapAdd}}' bask 2>/dev/null || true)"
-  web_caps_add="$(strip_cap_prefix "$web_caps_add")"
   web_caps_drop="$(docker inspect --format '{{json .HostConfig.CapDrop}}' bask 2>/dev/null || true)"
-  web_caps_drop="$(strip_cap_prefix "$web_caps_drop")"
   web_security="$(docker inspect --format '{{json .HostConfig.SecurityOpt}}' bask 2>/dev/null || true)"
   scanner_network="$(docker inspect --format '{{.HostConfig.NetworkMode}}' bask-scanner 2>/dev/null || true)"
   scanner_caps_add="$(docker inspect --format '{{json .HostConfig.CapAdd}}' bask-scanner 2>/dev/null || true)"
-  scanner_caps_add="$(strip_cap_prefix "$scanner_caps_add")"
   scanner_caps_drop="$(docker inspect --format '{{json .HostConfig.CapDrop}}' bask-scanner 2>/dev/null || true)"
-  scanner_caps_drop="$(strip_cap_prefix "$scanner_caps_drop")"
   scanner_security="$(docker inspect --format '{{json .HostConfig.SecurityOpt}}' bask-scanner 2>/dev/null || true)"
+  init_network="$(docker inspect --format '{{.HostConfig.NetworkMode}}' bask-init 2>/dev/null || true)"
+  init_caps_add="$(docker inspect --format '{{json .HostConfig.CapAdd}}' bask-init 2>/dev/null || true)"
+  init_caps_drop="$(docker inspect --format '{{json .HostConfig.CapDrop}}' bask-init 2>/dev/null || true)"
+  init_security="$(docker inspect --format '{{json .HostConfig.SecurityOpt}}' bask-init 2>/dev/null || true)"
   expected_data_mount="$data_path|/data|true"
   scanner_bus_pattern='^/(var/)?run/dbus/system_bus_socket\|/var/run/dbus/system_bus_socket\|false$'
   unexpected_web="$(printf '%s\n' "$web_mounts" | grep -Fvx "$expected_data_mount" || true)"
   unexpected_scanner="$(printf '%s\n' "$scanner_mounts" | grep -Fvx "$expected_data_mount" | grep -Ev "$scanner_bus_pattern" || true)"
-  [[ -z "$unexpected_web" && -z "$unexpected_scanner" ]] &&
+  # The one-shot init only repairs /data ownership: it mounts exactly /data and
+  # nothing else — in particular it must never gain the host D-Bus socket.
+  unexpected_init="$(printf '%s\n' "$init_mounts" | grep -Fvx "$expected_data_mount" || true)"
+  [[ -z "$unexpected_web" && -z "$unexpected_scanner" && -z "$unexpected_init" ]] &&
     grep -Fxq "$expected_data_mount" <<<"$web_mounts" &&
     grep -Fxq "$expected_data_mount" <<<"$scanner_mounts" &&
+    grep -Fxq "$expected_data_mount" <<<"$init_mounts" &&
     grep -Eq "$scanner_bus_pattern" <<<"$scanner_mounts" &&
     [[ -n "$web_user" && "$web_user" != 0 && "$web_user" != 0:* ]] &&
     [[ "$scanner_user" == 0 || "$scanner_user" == 0:* ]] &&
-    [[ "$web_read_only" == true && "$scanner_read_only" == true && "$scanner_network" == none ]] &&
-    [[ "$web_caps_add" == null && "$web_caps_drop" == '["ALL"]' ]] &&
+    [[ "$init_user" == 0 || "$init_user" == 0:* ]] &&
+    [[ "$web_read_only" == true && "$scanner_read_only" == true && "$init_read_only" == true ]] &&
+    [[ "$scanner_network" == none && "$init_network" == none ]] &&
+    caps_equal "$web_caps_add" &&
+    caps_equal "$web_caps_drop" ALL &&
     [[ "$web_security" == *'no-new-privileges:true'* ]] &&
-    [[ "$scanner_caps_add" == '["DAC_OVERRIDE"]' ]] &&
-    [[ "$scanner_caps_drop" == '["ALL"]' ]] &&
+    caps_equal "$scanner_caps_add" CHOWN DAC_OVERRIDE &&
+    caps_equal "$scanner_caps_drop" ALL &&
     [[ "$scanner_security" == *'no-new-privileges:true'* ]] &&
+    caps_equal "$init_caps_add" CHOWN DAC_READ_SEARCH &&
+    caps_equal "$init_caps_drop" ALL &&
+    [[ "$init_security" == *'no-new-privileges:true'* ]] &&
     verify_scanner_apparmor
 }
 
