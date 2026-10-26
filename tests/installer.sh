@@ -905,6 +905,43 @@ run_get_bask_dir "$retained_fail" >/dev/null
 assert_retained_data_intact "$retained_fail"
 echo "  a failed retained-data reinstall rolls back with data intact and can be retried"
 
+# A directory that carries a valid marker but is NOT actually clean — it already
+# holds a tracked source path — must be refused before anything is moved. A clean
+# uninstall never leaves source files, so a collision means an interrupted
+# cleanup could destroy a preexisting file. (get-bask.sh is a tracked path.)
+retained_collide="$work/retained-collision"
+seed_retained_dir "$retained_collide" "animal-room retained-data v1"
+printf 'PRE-EXISTING-GET-BASK\n' > "$retained_collide/get-bask.sh"
+if run_get_bask_dir "$retained_collide" > "$retained_collide.out" 2> "$retained_collide.err"; then
+  echo "A retained directory containing a preexisting tracked file was accepted." >&2
+  exit 1
+fi
+[[ ! -d "$retained_collide/.git" ]] || { echo "A refused collision gained a .git." >&2; exit 1; }
+[[ "$(cat "$retained_collide/get-bask.sh")" == "PRE-EXISTING-GET-BASK" ]] || {
+  echo "A refused reinstall overwrote or deleted the preexisting file." >&2; exit 1; }
+assert_retained_data_intact "$retained_collide"
+echo "  a retained directory with a preexisting tracked file is refused untouched"
+
+# A directory whose tracked path passes through a symlinked parent must be
+# refused: an interrupted cleanup following that link would delete files OUTSIDE
+# the install directory. Point a 'deploy' symlink at an unrelated tree holding an
+# install.sh (deploy/install.sh is a tracked path).
+retained_link="$work/retained-parent-symlink"
+seed_retained_dir "$retained_link" "animal-room retained-data v1"
+retained_outside="$work/retained-outside"
+rm -rf -- "$retained_outside"; mkdir -p -- "$retained_outside"
+printf 'OUTSIDE-FILE\n' > "$retained_outside/install.sh"
+ln -s "$retained_outside" "$retained_link/deploy"
+if run_get_bask_dir "$retained_link" > "$retained_link.out" 2> "$retained_link.err"; then
+  echo "A retained directory with a symlinked tracked-path parent was accepted." >&2
+  exit 1
+fi
+[[ ! -d "$retained_link/.git" ]] || { echo "A refused symlink case gained a .git." >&2; exit 1; }
+[[ -f "$retained_outside/install.sh" && "$(cat "$retained_outside/install.sh")" == "OUTSIDE-FILE" ]] || {
+  echo "A refused reinstall deleted a file outside the install directory through a symlink." >&2; exit 1; }
+assert_retained_data_intact "$retained_link"
+echo "  a retained directory with a symlinked tracked-path parent is refused untouched"
+
 echo "Standalone Bask installer tests passed."
 
 # A data directory the keeper cannot enter is the normal steady state: the

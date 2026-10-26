@@ -156,6 +156,28 @@ retained_data_marker_valid() {
   return 0
 }
 
+# Guard the reinstall against a directory that is not actually clean. Every path
+# the checkout will write must be new: not already present (an interrupted
+# cleanup removes exactly the tracked paths, so a preexisting collision would be
+# destroyed) and reached only through real directories (a symlinked parent would
+# let that cleanup delete outside the install directory). Refuses untouched if
+# either holds — nothing has been moved into place yet when this runs.
+assert_tracked_paths_new() {
+  local dir="$1" manifest="$2" tracked parent
+  while IFS= read -r -d '' tracked; do
+    [[ -n "$tracked" ]] || continue
+    if [[ -e "$dir/$tracked" || -L "$dir/$tracked" ]]; then
+      die "$dir already contains '$tracked'; this is not a clean retained-data directory. Move it aside or set BASK_INSTALL_DIR."
+    fi
+    parent="$tracked"
+    while [[ "$parent" == */* ]]; do
+      parent="${parent%/*}"
+      [[ ! -L "$dir/$parent" ]] ||
+        die "$dir/$parent is a symlink; refusing to reinstall through it. Move the directory aside or set BASK_INSTALL_DIR."
+    done
+  done < "$manifest"
+}
+
 # Re-establish a Git checkout inside a directory a normal uninstall left behind,
 # preserving data/, backups/, and .env. Everything risky happens in a scratch
 # clone first; only after it validates is the repository metadata moved into
@@ -175,6 +197,14 @@ retained_data_reinstall() {
   # reinstall removes exactly what it added and nothing that was preserved.
   retained_tracked_manifest="$stage_root/tracked"
   git -C "$candidate_dir" ls-files -z > "$retained_tracked_manifest"
+  # Prove every tracked path is genuinely new before taking over the directory.
+  # A clean uninstall leaves only data/, backups/, .env and the marker, so if any
+  # tracked path already exists, or any parent component is a symlink, this is not
+  # a clean retained-data directory: reinstalling would overwrite a preexisting
+  # file and an interrupted cleanup would then delete it (and a parent symlink
+  # would let that deletion escape the directory entirely). Refuse here — before
+  # .git is moved — so the preserved records are left exactly as they were.
+  assert_tracked_paths_new "$dir" "$retained_tracked_manifest"
   mv -- "$candidate_dir/.git" "$dir/.git"
   retained_git_placed=true
   candidate_dir=""

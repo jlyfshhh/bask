@@ -93,10 +93,14 @@ fi
 # one-shot init adds CHOWN and DAC_READ_SEARCH (and no more), and the init
 # service exists at all. A drift here is exactly the F03/F06 break where the
 # installer and the shipped Compose disagreed and every real install rolled back.
-if resolved_json="$(cd "$stage" && docker compose --project-directory "$stage" \
-      --env-file "$stage/.env" -f "$stage/compose.yaml" config --format json 2>/dev/null)" \
-   && [[ -n "$resolved_json" ]]; then
-  if ! printf '%s' "$resolved_json" | python3 - <<'PY'
+#
+# The assertions live in a standalone helper rather than a `python3 - <<EOF`
+# heredoc: `python3 -` reads its program from stdin, which would collide with the
+# resolved JSON we pipe in (json.load(sys.stdin) would hit EOF). With the program
+# in a file, stdin is free to carry the JSON — and the same helper can be fed a
+# crafted graph to prove the check actually fails, with or without Docker.
+capcheck="$work/capcheck.py"
+cat > "$capcheck" <<'PY'
 import json, sys
 d = json.load(sys.stdin)
 svc = d["services"]
@@ -113,7 +117,20 @@ for name in ("bask", "bask-scanner", "bask-init"):
     assert "ALL" in (svc[name].get("cap_drop") or []), "%s must drop ALL capabilities" % name
 assert svc["bask-init"].get("network_mode") == "none", "the init service must have no network"
 PY
-  then
+
+# Negative case, independent of Docker: a graph with the scanner missing CHOWN
+# must be rejected, or the real-Compose assertion below proves nothing.
+if printf '%s' '{"services":{"bask":{"cap_drop":["ALL"]},"bask-scanner":{"cap_add":["DAC_OVERRIDE"],"cap_drop":["ALL"]},"bask-init":{"cap_add":["CHOWN","DAC_READ_SEARCH"],"cap_drop":["ALL"],"network_mode":"none"}}}' \
+     | python3 "$capcheck" 2>/dev/null; then
+  echo "The capability check accepted a scanner missing CHOWN, so it could never catch drift." >&2
+  exit 1
+fi
+echo "  the capability check rejects a malformed capability set"
+
+if resolved_json="$(cd "$stage" && docker compose --project-directory "$stage" \
+      --env-file "$stage/.env" -f "$stage/compose.yaml" config --format json 2>/dev/null)" \
+   && [[ -n "$resolved_json" ]]; then
+  if ! printf '%s' "$resolved_json" | python3 "$capcheck"; then
     echo "The shipped compose.yaml does not declare the capability sets the installer audits." >&2
     exit 1
   fi
