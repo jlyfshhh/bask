@@ -3,7 +3,7 @@ services:
     # A prebuilt multi-architecture image, so installing is a pull rather than a
     # build on the target machine. To build from this checkout instead:
     #   docker compose -f compose.yaml -f compose.dev.yaml up -d --build
-    image: ghcr.io/jlyfshhh/bask:${BASK_TAG:-latest}
+    image: ghcr.io/jlyfshhh/bask:${BASK_TAG:-v1.1.1}
     container_name: bask
     restart: unless-stopped
     # Hand /data (and any WAL sidecars a prior root scanner left) back to the web
@@ -72,7 +72,7 @@ services:
   # repair that fails now exits non-zero so the web's dependency gate holds the
   # deadlock open visibly instead of letting the web crash-loop.
   bask-init:
-    image: ghcr.io/jlyfshhh/bask:${BASK_TAG:-latest}
+    image: ghcr.io/jlyfshhh/bask:${BASK_TAG:-v1.1.1}
     container_name: bask-init
     user: "0:0"
     read_only: true
@@ -128,7 +128,7 @@ services:
     restart: "no"
 
   bask-scanner:
-    image: ghcr.io/jlyfshhh/bask:${BASK_TAG:-latest}
+    image: ghcr.io/jlyfshhh/bask:${BASK_TAG:-v1.1.1}
     container_name: bask-scanner
     restart: unless-stopped
     # Wait for the web service to be healthy before starting. That guarantees
